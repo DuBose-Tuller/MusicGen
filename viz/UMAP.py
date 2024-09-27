@@ -16,8 +16,8 @@ def get_dataset_name(filename):
 
 # List of JSON files containing embeddings
 json_files = [
-    "acpas-unique-trimmed-s30-t30-embeddings.json",
-    "CMR-trimmed-s30-t30-embeddings.json"
+    "embeddings/acpas-unique-trimmed-s30-t30-embeddings.json",
+    "embeddings/CMR-trimmed-s30-t30-embeddings.json"
 ]
 
 # Load embeddings and prepare labels
@@ -54,7 +54,7 @@ plt.xlabel("UMAP 1")
 plt.ylabel("UMAP 2")
 
 # Save the plot
-plt.savefig("umap_visualization.png", dpi=300, bbox_inches='tight')
+plt.savefig("viz/umap_visualization.png", dpi=300, bbox_inches='tight')
 plt.close()
 
 print("UMAP visualization has been saved as 'umap_visualization.png'")

@@ -105,7 +105,7 @@ def prep_input(sequence, pad_token=-1, embed_dim=1536, emb_lr=1.0):
 
 
 def main():
-    DATASET = "acpas-unique-trimmed-s5-t5"
+    DATASET = "CMR-trimmed-s30-t30"
     EMBED_DIM = 1536
     data_path = f"../data/{DATASET}"
     log_file = f"{DATASET}_processed_files.json"
@@ -124,7 +124,7 @@ def main():
     try:
         for file in tqdm(os.listdir(data_path)):
             full_path = os.path.join(data_path, file)
-            if full_path in processed_files:
+            if full_path in processed_files or ".wav" not in full_path:
                 continue
             
             embedding = process_file(full_path, model)
