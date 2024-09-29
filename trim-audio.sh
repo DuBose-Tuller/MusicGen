@@ -34,35 +34,33 @@ fi
 
 input_dir="$1"
 
-# Function to process a single directory
-process_directory() {
-    local dir="$1"
-    local base_dir=$(dirname "$dir")
-    local dir_name=$(basename "$dir")
-    local output_dir="${base_dir}/${dir_name}-trimmed-s${segment_length}-t${stride_length}"
+# Function to process a single dataset directory
+process_dataset() {
+    local dataset_dir="$1"
+    local raw_dir="${dataset_dir}/raw"
+    local output_dir="${dataset_dir}/s${segment_length}-t${stride_length}"
     
-    # Skip if the directory name contains 'trimmed'
-    if [[ $dir_name == *"trimmed"* ]]; then
-        echo "Skipping already processed directory: $dir"
+    # Check if raw directory exists
+    if [ ! -d "$raw_dir" ]; then
+        echo "No 'raw' directory found in ${dataset_dir}. Skipping."
+        return
+    }
+    
+    # Check if output directory already exists
+    if [ -d "$output_dir" ]; then
+        echo "Output directory ${output_dir} already exists. Skipping processing for this dataset."
         return
     fi
     
     mkdir -p "$output_dir"
     
-    for file in "$dir"/*.wav; do
+    for file in "$raw_dir"/*.wav; do
         if [ -f "$file" ]; then
             filename=$(basename "$file")
-            
-            # Skip if the filename contains 'trimmed'
-            if [[ $filename == *"trimmed"* ]]; then
-                echo "Skipping already trimmed file: $file"
-                continue
-            fi
-            
             duration=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$file" 2>/dev/null)
             
             for start in $(seq 0 $stride_length $(echo "$duration - $segment_length" | bc)); do
-                output_file="${output_dir}/${filename%.*}_trimmed_${start}.wav"
+                output_file="${output_dir}/${filename%.*}_${start}.wav"
                 if [ ! -f "$output_file" ]; then
                     ffmpeg -i "$file" -ss $start -t $segment_length -c copy "$output_file" -y >/dev/null 2>&1
                     echo "Processed: $file -> $output_file"
@@ -74,11 +72,11 @@ process_directory() {
     done
 }
 
-# Process the main directory and its subdirectories
-for dir in "$input_dir"/*; do
-    if [ -d "$dir" ]; then
-        echo "Processing directory: $dir"
-        process_directory "$dir"
+# Process each dataset directory
+for dataset_dir in "$input_dir"/*; do
+    if [ -d "$dataset_dir" ]; then
+        echo "Processing dataset: $dataset_dir"
+        process_dataset "$dataset_dir"
     fi
 done
 
