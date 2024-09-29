@@ -5,6 +5,7 @@ from audiocraft.models import MusicGen
 import json
 from tqdm import tqdm
 import os
+import click
 
 def load_processed_files(log_file):
     if os.path.exists(log_file):
@@ -16,7 +17,7 @@ def save_processed_files(processed_files, log_file):
     with open(log_file, 'w') as f:
         json.dump(list(processed_files), f)
 
-def process_file(file, model, device="cuda"):
+def process_file(file, model, method="last", device="cuda"):
     waveform = preprocess_waveform(file)
     codes, scale = model.compression_model.encode(waveform)
     del waveform
@@ -30,8 +31,17 @@ def process_file(file, model, device="cuda"):
         for layer in model.lm.transformer.layers:
             x = x.half()
             x = layer(x)
+
+    if method == "last":
+        final_embedding = x[:,-1:,:].cpu().flatten().data.numpy().tolist()
     
-    final_embedding = x[:,-1,:].cpu().flatten().data.numpy().tolist()
+    elif method == "mean":
+        final_embedding = x.mean(axis=1).cpu().flatten().data.numpy().tolist()
+
+    else:
+        print("Invalid embedding capture method")
+        raise ValueError
+    
     return final_embedding
 
 
@@ -103,15 +113,34 @@ def prep_input(sequence, pad_token=-1, embed_dim=1536, emb_lr=1.0):
     input_ = sum(embedded)
     return input_
 
+@click.command()
+@click.argument("dataset")
+@click.option("-s", "--segment", default=None)
+@click.option("-t", "--stride", default=None)
+@click.option("-m", "--method", default="last", help="Embedding method to use")
 
-def main():
-    DATASET = "CMR-trimmed-s30-t30"
-    EMBED_DIM = 1536
-    data_path = f"../data/{DATASET}"
-    log_file = f"{DATASET}_processed_files.json"
-    output_file = f"{DATASET}-embeddings.json"
+def main(dataset, method, segment, stride):
+    # Parse and prep args
+    if segment is None and stride is None: # use raw audio
+        data_path = f"../data/{dataset}/raw/"
+
+    else: # use cut audio
+        segment = segment if segment is not None else "all"
+        stride = stride if stride is not None else "none"
+
+        data_path = f"../data/{dataset}/s{segment}-t{stride}/"
+
+    if not os.path.exists(data_path):
+        print("Could not find data folder " + data_path)
+        raise NotImplementedError
+    
+
+    log_file = os.path.join(dataset, f"s{segment}-t{stride}", f"{method}_processed_files.json")
+    output_file = os.path.join(dataset, f"s{segment}-t{stride}", f"{method}_embeddings.json")
+    os.makedirs(os.path.join(dataset, f"s{segment}-t{stride}"), exist_ok=True)
+
     model = MusicGen.get_pretrained('facebook/musicgen-melody')
-    print("Loaded Model")
+    print("Succeessfully Loaded Model")
 
     processed_files = load_processed_files(log_file)
     embeddings = {}
@@ -127,12 +156,12 @@ def main():
             if full_path in processed_files or ".wav" not in full_path:
                 continue
             
-            embedding = process_file(full_path, model)
+            embedding = process_file(full_path, model, method=method)
             embeddings[full_path] = embedding
             processed_files.add(full_path)
             
-            # Save progress every 10 files (adjust as needed)
-            if len(processed_files) % 10 == 0:
+            # Save progress every 25 files (adjust as needed)
+            if len(processed_files) % 25 == 0:
                 save_processed_files(processed_files, log_file)
                 with open(output_file, 'w') as f:
                     json.dump(embeddings, f)
