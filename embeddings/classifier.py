@@ -1,4 +1,4 @@
-from sklearn.metrics import f1_score, recall_score, precision_score, confusion_matrix
+from sklearn.metrics import f1_score, recall_score, precision_score, confusion_matrix, roc_auc_score
 import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
@@ -58,11 +58,19 @@ def multiclass_model(X, y):
     matrix = confusion_matrix(y_test, y_pred)
     
     # Additional metrics
-    f1 = f1_score(y_test, y_pred, average='weighted')
-    recall = recall_score(y_test, y_pred, average='weighted')
-    precision = precision_score(y_test, y_pred, average='weighted')
+    f1 = f1_score(y_test, y_pred, average='macro')
+    recall = recall_score(y_test, y_pred, average='macro')
+    precision = precision_score(y_test, y_pred, average='macro')
+    roc_auc = roc_auc_score(y_test, y_pred)
+
+    metrics = {
+        "f1": f1,
+        "recall": recall,
+        "precision": precision,
+        "roc-auc": roc_auc,
+    }
     
-    return matrix, f1, recall, precision, model
+    return matrix, metrics
 
 
 
@@ -71,23 +79,28 @@ def main():
         {
             "dataset": "acpas",
             "method": "last",
-            "segment": "5",
-            "stride": "5"
+            "segment": "30",
+            "stride": "30"
         },
         {
             "dataset": "CBF",
             "method": "last",
-            "segment": "5",
-            "stride": "5"
+            "segment": "30",
+            "stride": "30"
         }
     ]
     
     files = get_filenames(config)
+    assert files is not []
     X, y = construct_dataset(files)
 
-    cm, f1, recall, precision, _ = multiclass_model(X, y)
+    cm, metrics = multiclass_model(X, y)
+    print(type(metrics))
     print(cm)
-    print(f1)
+    print(f"F1 Score: {metrics['f1']:0.2f}")
+    print(f"Precision: {metrics['precision']:0.2f}")
+    print(f"Recall: {metrics['recall']:0.2f}")
+    print(f"ROC-AUC: {metrics['roc-auc']:0.2f}")
 
 if __name__ == "__main__":
     main()
