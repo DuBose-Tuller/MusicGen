@@ -160,8 +160,8 @@ def main(dataset, method, segment, stride):
             embeddings[full_path] = embedding
             processed_files.add(full_path)
             
-            # Save progress every 25 files (adjust as needed)
-            if len(processed_files) % 25 == 0:
+            # Save progress
+            if len(processed_files) % 100 == 0:
                 save_processed_files(processed_files, log_file)
                 with open(output_file, 'w') as f:
                     json.dump(embeddings, f)

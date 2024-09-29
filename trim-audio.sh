@@ -7,8 +7,8 @@ if ! command -v ffmpeg &> /dev/null; then
 fi
 
 # Default values
-segment_length=5
-stride_length=5
+segment_length=15
+stride_length=15
 
 # Parse command line arguments
 while getopts ":s:t:" opt; do
@@ -44,7 +44,7 @@ process_dataset() {
     if [ ! -d "$raw_dir" ]; then
         echo "No 'raw' directory found in ${dataset_dir}. Skipping."
         return
-    }
+    fi
     
     # Check if output directory already exists
     if [ -d "$output_dir" ]; then
