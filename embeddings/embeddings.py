@@ -17,31 +17,77 @@ def save_processed_files(processed_files, log_file):
     with open(log_file, 'w') as f:
         json.dump(list(processed_files), f)
 
-def process_file(file, model, method="last", device="cuda"):
-    waveform = preprocess_waveform(file)
-    codes, scale = model.compression_model.encode(waveform)
-
-    gen_sequence = get_patterns(model, codes)
-    x = prep_input(gen_sequence)
+def enhanced_preprocess_and_encode(filename, model, device='cuda'):
+    waveform, sample_rate = torchaudio.load(filename)
     
-    del codes
-    del gen_sequence
-    del waveform
+    # Convert to mono if stereo
+    if waveform.shape[0] > 1:
+        waveform = torch.mean(waveform, dim=0, keepdim=True)
     
+    # Resample if necessary (MusicGen expects 32kHz)
+    if sample_rate != 32000:
+        print(f"Received a sample rate of {sample_rate}. Resampling to 32kHz...")
+        waveform = torchaudio.transforms.Resample(sample_rate, 32000)(waveform)
+    
+    # Normalize waveform
+    waveform = waveform / waveform.abs().max()
+    
+    # Ensure correct shape and device
+    waveform = waveform.unsqueeze(0).to(device)
+    
+    # Print waveform statistics
+    print(f"Waveform shape: {waveform.shape}")
+    print(f"Waveform stats - Min: {waveform.min().item():.4f}, Max: {waveform.max().item():.4f}")
+    print(f"Mean: {waveform.mean().item():.4f}, Std: {waveform.std().item():.4f}")
+    
+    # Encode
     with torch.no_grad():
-        for layer in model.lm.transformer.layers:
+        encoded_frames = model.compression_model.encode(waveform)
+    
+    codes = encoded_frames[0]  # [B, K, T]
+    
+    # Print encoding statistics
+    print(f"\nEncoded shape: {codes.shape}")
+    for k in range(codes.shape[1]):
+        unique_codes = torch.unique(codes[0, k])
+        print(f"Codebook {k}:")
+        print(f"  Unique tokens: {len(unique_codes)}")
+        print(f"  Min: {codes[0, k].min().item()}, Max: {codes[0, k].max().item()}")
+        print(f"  Mean: {codes[0, k].float().mean().item():.2f}, Std: {codes[0, k].float().std().item():.2f}")
+    
+    return codes
+
+def process_file(file, model, method="last", device="cuda"):
+    codes = enhanced_preprocess_and_encode(file, model, device)
+    
+    gen_sequence = get_patterns(model, codes)
+    
+    print(f"\nProcessing file: {file}")
+    print(f"Generated sequence shape: {gen_sequence.shape}")
+    
+    x = prep_input(gen_sequence)
+        
+    with torch.no_grad():
+        for i, layer in enumerate(model.lm.transformer.layers):
             x = x.half()
             x = layer(x)
+            print(f"\nAfter layer {i}:")
+            print(f"  Shape: {x.shape}")
+            print(f"  Min: {x.min().item():.4f}, Max: {x.max().item():.4f}")
+            print(f"  Mean: {x.mean().item():.4f}, Std: {x.std().item():.4f}")
 
     if method == "last":
         final_embedding = x[:,-1:,:].cpu().flatten().data.numpy().tolist()
-    
     elif method == "mean":
         final_embedding = x.mean(axis=1).cpu().flatten().data.numpy().tolist()
-
     else:
         print("Invalid embedding capture method")
         raise ValueError
+    
+    print("\nFinal embedding:")
+    print(f"  Shape: {len(final_embedding)}")
+    print(f"  Min: {min(final_embedding):.4f}, Max: {max(final_embedding):.4f}")
+    print(f"  Mean: {sum(final_embedding)/len(final_embedding):.4f}")
     
     return final_embedding
 
@@ -103,6 +149,10 @@ def prep_input(sequence, pad_token=-1, embed_dim=1536, emb_lr=1.0):
     vocab_size = sequence.max().item() + 1
     emb = nn.ModuleList([ScaledEmbedding(vocab_size, embed_dim, padding_idx=pad_token, lr=emb_lr) for _ in range(K)]).to(device)
 
+    # Diagnostic information
+    token_stats = []
+    unique_tokens = []
+
     # Apply each embedding layer to its corresponding codebook and sum the results
     embedded = []
     for k in range(K):
@@ -110,8 +160,33 @@ def prep_input(sequence, pad_token=-1, embed_dim=1536, emb_lr=1.0):
         seq_k = torch.where(sequence[:, k] == pad_token, torch.tensor(vocab_size - 1, device=device), sequence[:, k])
         emb_k = emb[k](seq_k)
         embedded.append(emb_k)
+        
+        # Collect diagnostic information
+        unique_k = torch.unique(seq_k)
+        token_stats.append({
+            'min': seq_k.min().item(),
+            'max': seq_k.max().item(),
+            'mean': seq_k.float().mean().item(),
+            'std': seq_k.float().std().item(),
+            'num_unique': len(unique_k)
+        })
+        unique_tokens.append(unique_k.cpu().numpy())
     
     input_ = sum(embedded)
+    
+    # Print diagnostic information
+    print("\nTokenization Diagnostics:")
+    for k in range(K):
+        print(f"Codebook {k}:")
+        print(f"  Min: {token_stats[k]['min']}, Max: {token_stats[k]['max']}")
+        print(f"  Mean: {token_stats[k]['mean']:.2f}, Std: {token_stats[k]['std']:.2f}")
+        print(f"  Unique tokens: {token_stats[k]['num_unique']}")
+        print(f"  Sample of unique tokens: {unique_tokens[k][:10]}...")
+    
+    print(f"\nFinal input shape: {input_.shape}")
+    print(f"Input statistics - Min: {input_.min().item():.4f}, Max: {input_.max().item():.4f}")
+    print(f"Mean: {input_.mean().item():.4f}, Std: {input_.std().item():.4f}")
+    
     return input_
 
 @click.command()
@@ -156,8 +231,8 @@ def main(dataset, method, segment, stride):
     try:
         for file in tqdm(os.listdir(data_path)):
             full_path = os.path.join(data_path, file)
-            if full_path in processed_files or ".wav" not in full_path:
-                continue
+            # if full_path in processed_files or ".wav" not in full_path:
+            #     continue
             
             embedding = process_file(full_path, model, method=method)
             embeddings[full_path] = embedding
