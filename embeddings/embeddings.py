@@ -18,15 +18,15 @@ def save_processed_files(processed_files, log_file):
         json.dump(list(processed_files), f)
 
 def process_file(file, model, method="last", device="cuda"):
-    waveform = preprocess_waveform(file)
-    codes, scale = model.compression_model.encode(waveform)
+    # waveform = preprocess_waveform(file)
+    # codes, scale = model.compression_model.encode(waveform)
+    codes = preprocess_waveform(file, model, device)
 
     gen_sequence = get_patterns(model, codes)
     x = prep_input(gen_sequence)
     
     del codes
     del gen_sequence
-    del waveform
     
     with torch.no_grad():
         for layer in model.lm.transformer.layers:
@@ -46,7 +46,7 @@ def process_file(file, model, method="last", device="cuda"):
     return final_embedding
 
 
-def preprocess_waveform(filename, device='cuda'):
+def preprocess_waveform(filename, model, device='cuda'):
     if type(filename) == str:
         waveform, sample_rate = torchaudio.load(filename)
     else:
@@ -57,7 +57,23 @@ def preprocess_waveform(filename, device='cuda'):
     if waveform.shape[0] > 1:
         waveform = torch.mean(waveform, dim=0, keepdim=True)
 
-    return waveform.unsqueeze(0).to(device)
+    # Resample if necessary (MusicGen expects 32kHz)
+    if sample_rate != 32000:
+        print(f"Sample rate is {sample_rate}, resampling to 32kHz...")
+        waveform = torchaudio.transforms.Resample(sample_rate, 32000)(waveform)
+    
+    # Normalize waveform
+    waveform = waveform / waveform.abs().max()
+    
+    # Ensure correct shape and device
+    waveform = waveform.unsqueeze(0).to(device)
+
+    # Encode
+    with torch.no_grad():
+        encoded_frames = model.compression_model.encode(waveform)
+    
+    codes = encoded_frames[0]  # [B, K, T]
+    return codes
 
 
 # Largely ripped from LMModel.generate() in lm.py
