@@ -23,6 +23,9 @@ def get_filenames(sources):
             filename = os.path.join(path, f"{data['method']}_embeddings.json")
             files.append(filename)       
 
+    if files == []:
+        raise ValueError
+    
     return files
     
 def construct_dataset(sources, verbose=False):
@@ -91,7 +94,6 @@ def main():
     ]
     
     files = get_filenames(config)
-    assert files is not []
     X, y = construct_dataset(files)
 
     cm, metrics = multiclass_model(X, y)

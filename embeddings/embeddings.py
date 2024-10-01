@@ -20,12 +20,13 @@ def save_processed_files(processed_files, log_file):
 def process_file(file, model, method="last", device="cuda"):
     waveform = preprocess_waveform(file)
     codes, scale = model.compression_model.encode(waveform)
-    del waveform
 
     gen_sequence = get_patterns(model, codes)
     x = prep_input(gen_sequence)
+    
     del codes
     del gen_sequence
+    del waveform
     
     with torch.no_grad():
         for layer in model.lm.transformer.layers:
@@ -123,21 +124,23 @@ def main(dataset, method, segment, stride):
     # Parse and prep args
     if segment is None and stride is None: # use raw audio
         data_path = f"../data/{dataset}/raw/"
+        log_file = os.path.join(dataset, "raw", f"{method}_processed_files.json")
+        output_file = os.path.join(dataset, "raw", f"{method}_embeddings.json")
+        os.makedirs(os.path.join(dataset, "raw"), exist_ok=True)
 
     else: # use cut audio
         segment = segment if segment is not None else "all"
         stride = stride if stride is not None else "none"
 
         data_path = f"../data/{dataset}/s{segment}-t{stride}/"
+        log_file = os.path.join(dataset, f"s{segment}-t{stride}", f"{method}_processed_files.json")
+        output_file = os.path.join(dataset, f"s{segment}-t{stride}", f"{method}_embeddings.json")
+        os.makedirs(os.path.join(dataset, f"s{segment}-t{stride}"), exist_ok=True)
 
     if not os.path.exists(data_path):
         print("Could not find data folder " + data_path)
         raise NotImplementedError
-    
 
-    log_file = os.path.join(dataset, f"s{segment}-t{stride}", f"{method}_processed_files.json")
-    output_file = os.path.join(dataset, f"s{segment}-t{stride}", f"{method}_embeddings.json")
-    os.makedirs(os.path.join(dataset, f"s{segment}-t{stride}"), exist_ok=True)
 
     model = MusicGen.get_pretrained('facebook/musicgen-melody')
     print("Succeessfully Loaded Model")
