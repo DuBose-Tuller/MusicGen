@@ -1,0 +1,18 @@
+# Default configuration
+
+datasets:
+  - dataset: "CBF"
+    method: "mean"
+    segment: "15"
+    stride: "15"
+  - dataset: "toy"
+    method: "mean"
+    segment: null
+    stride: null
+
+umap:
+  n_neighbors: 5
+  min_dist: 0.01
+
+output:
+  filename: "umap_visualization.png"
