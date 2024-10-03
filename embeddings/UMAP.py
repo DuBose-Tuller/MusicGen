@@ -66,8 +66,7 @@ def generate_output_filename(config):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
     # Create the filename
-    datasets = "_".join([d['dataset'] for d in config['datasets']])
-    filename = f"UMAP_{datasets}_{timestamp}_{config_hash}.png"
+    filename = f"UMAP_{timestamp}_{config_hash}.png"
     
     return filename
 
@@ -115,14 +114,17 @@ def main():
     umap_embeddings = umap_model.fit_transform(all_embeddings)
 
     plt.figure(figsize=(12, 8))
-    plt.scatter(umap_embeddings[:, 0], umap_embeddings[:, 1], 
-                c=all_labels, cmap='viridis', alpha=0.7)
 
-    legend_elements = [plt.Line2D([0], [0], marker='o', color='w', 
-                    label=name, markerfacecolor=plt.cm.viridis(i/(len(dataset_names)-1)), markersize=10)
-                    for i, name in enumerate(dataset_names)]
-    plt.legend(handles=legend_elements, title="Datasets")
+    # Use a colormap that can handle an arbitrary number of datasets
+    cmap = plt.get_cmap('tab20')  # This colormap supports up to 20 distinct colors
+    
+    # Create a scatter plot for each dataset
+    for i, dataset in enumerate(dataset_names):
+        mask = all_labels == i
+        plt.scatter(umap_embeddings[mask, 0], umap_embeddings[mask, 1], 
+                    c=[cmap(i/len(dataset_names))], label=dataset, alpha=0.7)
 
+    plt.legend(title="Datasets")
     plt.title("UMAP Visualization of Embeddings")
 
     plt.savefig(output_path, bbox_inches='tight')
