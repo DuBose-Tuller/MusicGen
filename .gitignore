@@ -1,7 +1,7 @@
 /.venv
-/data
 **/*.ipynb_checkpoints/
 **/*.out
 **/*.json
 **/*.png
 **/*.yaml
+**/*.wav
