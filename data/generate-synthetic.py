@@ -10,6 +10,7 @@ def generate_tone(freq, duration, sample_rate, phase_shift=0):
 
 def save_waveform(waveform, filename, sample_rate):
     waveform_tensor = torch.from_numpy(waveform).float().unsqueeze(0)
+    print(filename)
     torchaudio.save(filename, waveform_tensor, sample_rate)
 
 def main():
@@ -21,11 +22,11 @@ def main():
 
     # Frequency ranges
     low_freq_range = (130.81, 164.81)  # C3 to E3
-    high_freq_range = (523.25, 659.25)  # C5 to E5
+    high_freq_range = (1046.5, 1318.51)  # C5 to E5
 
     # Create output directories
-    os.makedirs("synthetic-low", exist_ok=True)
-    os.makedirs("synthetic-high", exist_ok=True)
+    os.makedirs("synthetic-low/raw", exist_ok=True)
+    os.makedirs("synthetic-high/raw", exist_ok=True)
 
     # Generate low frequency group
     for i in range(num_samples):
@@ -33,7 +34,7 @@ def main():
         for j in range(num_phase_shifts):
             phase_shift = np.random.uniform(0, 2 * np.pi)
             waveform = generate_tone(freq, duration, sample_rate, phase_shift)
-            filename = f"synthetic-low/low_tone_{i:03d}_phase_{j}.wav"
+            filename = f"synthetic-low/raw/low_tone_{int(freq):03d}_phase_{phase_shift:0.3f}.wav"
             save_waveform(waveform, filename, sample_rate)
 
     # Generate high frequency group
@@ -42,7 +43,7 @@ def main():
         for j in range(num_phase_shifts):
             phase_shift = np.random.uniform(0, 2 * np.pi)
             waveform = generate_tone(freq, duration, sample_rate, phase_shift)
-            filename = f"synthetic-high/high_tone_{i:03d}_phase_{j}.wav"
+            filename = f"synthetic-high/raw/high_tone_{int(freq):03d}_phase_{phase_shift:0.3f}.wav"
             save_waveform(waveform, filename, sample_rate)
 
 if __name__ == "__main__":
