@@ -22,7 +22,7 @@ def process_file(file, model, method="last", device="cuda"):
     # codes, scale = model.compression_model.encode(waveform)
     codes = preprocess_waveform(file, model, device)
 
-    gen_sequence = get_patterns(model, codes)
+    gen_sequence = get_patterns(model, codes, device)
     x = prep_input(gen_sequence)
     
     del codes
@@ -40,7 +40,7 @@ def process_file(file, model, method="last", device="cuda"):
         final_embedding = x.mean(axis=1).cpu().flatten().data.numpy().tolist()
 
     else:
-        print("Invalid embedding capture method")
+        print(f"Invalid embedding capture method {method}")
         raise ValueError
     
     return final_embedding
