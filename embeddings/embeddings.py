@@ -109,6 +109,16 @@ class ScaledEmbedding(nn.Embedding):
         if self.lr is not None:
             group["lr"] = self.lr
         return group
+    
+
+class DeterministicEmbedding(nn.Embedding):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        # Initialize weights deterministically
+        nn.init.xavier_uniform_(self.weight, gain=1.0)
 
 
 def prep_input(sequence, pad_token=-1, embed_dim=1536, emb_lr=1.0):
@@ -117,7 +127,7 @@ def prep_input(sequence, pad_token=-1, embed_dim=1536, emb_lr=1.0):
     
     # Adjust vocab_size to account for padding token and maximum value
     vocab_size = sequence.max().item() + 1
-    emb = nn.ModuleList([ScaledEmbedding(vocab_size, embed_dim, padding_idx=pad_token, lr=emb_lr) for _ in range(K)]).to(device)
+    emb = nn.ModuleList([DeterministicEmbedding(vocab_size, embed_dim, padding_idx=pad_token) for _ in range(K)]).to(device)
 
     # Apply each embedding layer to its corresponding codebook and sum the results
     embedded = []
