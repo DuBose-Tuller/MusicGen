@@ -46,7 +46,7 @@ def enhanced_preprocess_and_encode(filename, model, device='cuda'):
     
     codes = encoded_frames[0]  # [B, K, T]
     
-    # Print encoding statistics
+    #Print encoding statistics
     print(f"\nEncoded shape: {codes.shape}")
     for k in range(codes.shape[1]):
         unique_codes = torch.unique(codes[0, k])
@@ -63,7 +63,7 @@ def process_file(file, model, method="last", device="cuda"):
     gen_sequence = get_patterns(model, codes)
     
     print(f"\nProcessing file: {file}")
-    print(f"Generated sequence shape: {gen_sequence.shape}")
+    print(f"Sequence shape: {gen_sequence.shape}")
     
     x = prep_input(gen_sequence)
         
@@ -72,7 +72,6 @@ def process_file(file, model, method="last", device="cuda"):
             x = x.half()
             x = layer(x)
             print(f"\nAfter layer {i}:")
-            print(f"  Shape: {x.shape}")
             print(f"  Min: {x.min().item():.4f}, Max: {x.max().item():.4f}")
             print(f"  Mean: {x.mean().item():.4f}, Std: {x.std().item():.4f}")
 
@@ -85,7 +84,6 @@ def process_file(file, model, method="last", device="cuda"):
         raise ValueError
     
     print("\nFinal embedding:")
-    print(f"  Shape: {len(final_embedding)}")
     print(f"  Min: {min(final_embedding):.4f}, Max: {max(final_embedding):.4f}")
     print(f"  Mean: {sum(final_embedding)/len(final_embedding):.4f}")
     
@@ -142,6 +140,7 @@ class ScaledEmbedding(nn.Embedding):
 
 
 def prep_input(sequence, pad_token=-1, embed_dim=1536, emb_lr=1.0):
+    print(f"    Sequence: {sequence}")
     device = sequence.device
     B, K, S = sequence.shape
     
