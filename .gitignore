@@ -6,3 +6,4 @@
 **/*.yaml
 **/*.wav
 **/__pycache__/
+/logs
