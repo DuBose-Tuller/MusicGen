@@ -35,11 +35,6 @@ def enhanced_preprocess_and_encode(filename, model, device='cuda'):
     # Ensure correct shape and device
     waveform = waveform.unsqueeze(0).to(device)
     
-    # Print waveform statistics
-    print(f"Waveform shape: {waveform.shape}")
-    print(f"Waveform stats - Min: {waveform.min().item():.4f}, Max: {waveform.max().item():.4f}")
-    print(f"Mean: {waveform.mean().item():.4f}, Std: {waveform.std().item():.4f}")
-    
     # Encode
     with torch.no_grad():
         encoded_frames = model.compression_model.to(device).encode(waveform)
@@ -71,9 +66,13 @@ def process_file(file, model, method="last", device="cuda"):
         for i, layer in enumerate(model.lm.transformer.layers):
             x = x.half()
             x = layer(x)
-            print(f"\nAfter layer {i}: {layer}")
+            print(f"\nAfter layer {i}:")
             print(f"  Min: {x.min().item():.4f}, Max: {x.max().item():.4f}")
             print(f"  Mean: {x.mean().item():.4f}, Std: {x.std().item():.4f}")
+
+            first_four = [f"{val:.3f}" for val in x[0, 0, :4].tolist()]
+            last_four = [f"{val:.3f}" for val in x[0, 0, -4:].tolist()]
+            print(f" First 4: {first_four}, Last 4: {last_four}")
 
     if method == "last":
         final_embedding = x[:,-1:,:].cpu().flatten().data.numpy().tolist()
@@ -184,17 +183,21 @@ def prep_input(sequence, pad_token=-1, embed_dim=1536, emb_lr=1.0):
     input_ = sum(embedded)
     
     # Print diagnostic information
-    print("\nTokenization Diagnostics:")
-    for k in range(K):
-        print(f"Codebook {k}:")
-        print(f"  Min: {token_stats[k]['min']}, Max: {token_stats[k]['max']}")
-        print(f"  Mean: {token_stats[k]['mean']:.2f}, Std: {token_stats[k]['std']:.2f}")
-        print(f"  Unique tokens: {token_stats[k]['num_unique']}")
-        print(f"  Sample of unique tokens: {unique_tokens[k][:10]}...")
+    # print("\nTokenization Diagnostics:")
+    # for k in range(K):
+    #     print(f"Codebook {k}:")
+    #     print(f"  Min: {token_stats[k]['min']}, Max: {token_stats[k]['max']}")
+    #     print(f"  Mean: {token_stats[k]['mean']:.2f}, Std: {token_stats[k]['std']:.2f}")
+    #     print(f"  Unique tokens: {token_stats[k]['num_unique']}")
+    #     print(f"  Sample of unique tokens: {unique_tokens[k][:10]}...")
     
     print(f"\nFinal input shape: {input_.shape}")
     print(f"Input statistics - Min: {input_.min().item():.4f}, Max: {input_.max().item():.4f}")
     print(f"Mean: {input_.mean().item():.4f}, Std: {input_.std().item():.4f}")
+
+    first_four = [f"{val:.3f}" for val in input_[0, 0, :4].tolist()]
+    last_four = [f"{val:.3f}" for val in input_[0, 0, -4:].tolist()]
+    print(f" First 4: {first_four}, Last 4: {last_four}")
     
     return input_
 
