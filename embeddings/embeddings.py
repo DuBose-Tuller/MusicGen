@@ -71,7 +71,7 @@ def process_file(file, model, method="last", device="cuda"):
         for i, layer in enumerate(model.lm.transformer.layers):
             x = x.half()
             x = layer(x)
-            print(f"\nAfter layer {i}:")
+            print(f"\nAfter layer {i}: {layer}")
             print(f"  Min: {x.min().item():.4f}, Max: {x.max().item():.4f}")
             print(f"  Mean: {x.mean().item():.4f}, Std: {x.std().item():.4f}")
 
@@ -138,7 +138,7 @@ class ScaledEmbedding(nn.Embedding):
             group["lr"] = self.lr
         return group
 
-
+@torch.no_grad()
 def prep_input(sequence, pad_token=-1, embed_dim=1536, emb_lr=1.0):
     print(f"    Sequence: {sequence}")
     device = sequence.device
