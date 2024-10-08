@@ -5,7 +5,7 @@ from audiocraft.models import MusicGen
 import json
 from tqdm import tqdm
 import os
-import click
+import argparse
 
 def load_processed_files(log_file):
     if os.path.exists(log_file):
@@ -18,8 +18,6 @@ def save_processed_files(processed_files, log_file):
         json.dump(list(processed_files), f)
 
 def process_file(file, model, method="last", device="cuda"):
-    # waveform = preprocess_waveform(file)
-    # codes, scale = model.compression_model.encode(waveform)
     codes = preprocess_waveform(file, model, device)
 
     gen_sequence = get_patterns(model, codes, device)
@@ -130,28 +128,34 @@ def prep_input(sequence, pad_token=-1, embed_dim=1536, emb_lr=1.0):
     input_ = sum(embedded)
     return input_
 
-@click.command()
-@click.argument("dataset")
-@click.option("-s", "--segment", default=None)
-@click.option("-t", "--stride", default=None)
-@click.option("-m", "--method", default="last", help="Embedding method to use")
+def parse_args():
+    parser = argparse.ArgumentParser(description="Generate embeddings for audio files")
+    parser.add_argument("dataset", help="Name of the dataset")
+    parser.add_argument("-s", "--segment", type=str, default=None, help="Segment length")
+    parser.add_argument("-t", "--stride", type=str, default=None, help="Stride length")
+    parser.add_argument("-m", "--method", default="last", choices=["last", "mean"], help="Embedding method to use")
 
-def main(dataset, method, segment, stride):
-    # Parse and prep args
-    if segment is None and stride is None: # use raw audio
-        data_path = f"../data/{dataset}/raw/"
-        log_file = os.path.join(dataset, "raw", f"{method}_processed_files.json")
-        output_file = os.path.join(dataset, "raw", f"{method}_embeddings.json")
-        os.makedirs(os.path.join(dataset, "raw"), exist_ok=True)
+    args = parser.parse_args()
 
-    else: # use cut audio
-        segment = segment if segment is not None else "all"
-        stride = stride if stride is not None else "none"
+    # Prepare args
+    if args.segment is None and args.stride is None:
+        data_path = f"../data/{args.dataset}/raw/"
+        log_file = os.path.join(args.dataset, "raw", f"{args.method}_processed_files.json")
+        output_file = os.path.join(args.dataset, "raw", f"{args.method}_embeddings.json")
+        os.makedirs(os.path.join(args.dataset, "raw"), exist_ok=True)
+    else:
+        segment = args.segment if args.segment is not None else "all"
+        stride = args.stride if args.stride is not None else "none"
 
-        data_path = f"../data/{dataset}/s{segment}-t{stride}/"
-        log_file = os.path.join(dataset, f"s{segment}-t{stride}", f"{method}_processed_files.json")
-        output_file = os.path.join(dataset, f"s{segment}-t{stride}", f"{method}_embeddings.json")
-        os.makedirs(os.path.join(dataset, f"s{segment}-t{stride}"), exist_ok=True)
+        data_path = f"../data/{args.dataset}/s{segment}-t{stride}/"
+        log_file = os.path.join(args.dataset, f"s{segment}-t{stride}", f"{args.method}_processed_files.json")
+        output_file = os.path.join(args.dataset, f"s{segment}-t{stride}", f"{args.method}_embeddings.json")
+        os.makedirs(os.path.join(args.dataset, f"s{segment}-t{stride}"), exist_ok=True)
+
+    return args, data_path, output_file, log_file
+
+def main(): 
+    args, data_path, output_file, log_file = parse_args()
 
     if not os.path.exists(data_path):
         print("Could not find data folder " + data_path)
@@ -175,7 +179,7 @@ def main(dataset, method, segment, stride):
             if full_path in processed_files or ".wav" not in full_path:
                 continue
             
-            embedding = process_file(full_path, model, method=method)
+            embedding = process_file(full_path, model, method=args.method)
             embeddings[full_path] = embedding
             processed_files.add(full_path)
             
