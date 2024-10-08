@@ -39,4 +39,4 @@ model = MusicGen.get_pretrained('facebook/musicgen-melody')
 
 # Run the determinism test
 file_path = "../data/troubleshoot/raw/high_tone_1309_phase_0.489.wav"  # Replace with your file path
-determinism_test(file_path, model, num_runs=2)
+determinism_test(file_path, model, num_runs=2, device="cpu")

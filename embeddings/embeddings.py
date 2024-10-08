@@ -42,7 +42,7 @@ def enhanced_preprocess_and_encode(filename, model, device='cuda'):
     
     # Encode
     with torch.no_grad():
-        encoded_frames = model.compression_model.encode(waveform)
+        encoded_frames = model.compression_model.to(device).encode(waveform)
     
     codes = encoded_frames[0]  # [B, K, T]
     
