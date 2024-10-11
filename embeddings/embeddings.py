@@ -155,7 +155,7 @@ def prep_input(sequence, pad_token=-1, embed_dim=1536, emb_lr=1.0):
     
     # Adjust vocab_size to account for padding token and maximum value
     vocab_size = sequence.max().item() + 1
-    emb = nn.ModuleList([DeterministicEmbedding(vocab_size, embed_dim, padding_idx=pad_token) for _ in range(K)]).to(device)
+    emb = nn.ModuleList([ScaledEmbedding(vocab_size, embed_dim, padding_idx=pad_token) for _ in range(K)]).to(device)
 
     # Diagnostic information
     token_stats = []
@@ -243,18 +243,10 @@ def main(dataset, method, segment, stride):
     try:
         for file in tqdm(os.listdir(data_path)):
             full_path = os.path.join(data_path, file)
-            # if full_path in processed_files or ".wav" not in full_path:
-            #     continue
             
             embedding = process_file(full_path, model, method=method)
             embeddings[full_path] = embedding
             processed_files.add(full_path)
-            
-            # Save progress
-            if len(processed_files) % 100 == 0:
-                save_processed_files(processed_files, log_file)
-                with open(output_file, 'w') as f:
-                    json.dump(embeddings, f)
 
     except KeyboardInterrupt:
         print("Process interrupted. Saving progress...")
