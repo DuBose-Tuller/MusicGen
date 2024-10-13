@@ -90,10 +90,6 @@ def get_patterns(model, prompt, device="cuda"):
     gen_codes[..., :start_offset] = prompt
     # create the gen_sequence with proper interleaving from the pattern: [B, K, S]
     gen_sequence, indexes, mask = pattern.build_pattern_sequence(gen_codes, 2048)
-    # retrieve the start_offset in the sequence:
-    # it is the first sequence step that contains the `start_offset` timestep
-    start_offset_sequence = pattern.get_first_step_with_timesteps(start_offset)
-    assert start_offset_sequence is not None
 
     return gen_sequence
 
