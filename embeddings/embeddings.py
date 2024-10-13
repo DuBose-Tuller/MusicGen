@@ -60,9 +60,6 @@ def preprocess_waveform(filename, model, device='cuda'):
         print(f"Sample rate is {sample_rate}, resampling to 32kHz...")
         waveform = torchaudio.transforms.Resample(sample_rate, 32000)(waveform)
     
-    # Normalize waveform
-    waveform = waveform / waveform.abs().max()
-    
     # Ensure correct shape and device
     waveform = waveform.unsqueeze(0).to(device)
 
