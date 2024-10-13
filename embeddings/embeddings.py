@@ -130,6 +130,7 @@ def parse_args():
     parser.add_argument("-s", "--segment", type=str, default=None, help="Segment length")
     parser.add_argument("-t", "--stride", type=str, default=None, help="Stride length")
     parser.add_argument("-m", "--method", default="last", choices=["last", "mean"], help="Embedding method to use")
+    parser.add_argument("-o", "--override", action="store_true", help="Override existing embedding file")
 
     args = parser.parse_args()
 
@@ -156,6 +157,14 @@ def main():
     if not os.path.exists(data_path):
         print("Could not find data folder " + data_path)
         raise NotImplementedError
+    
+    if args.override:
+        try:
+            os.remove(log_file)
+            os.remove(output_file)
+        except FileNotFoundError:
+            print("Tried to override, but log file not found! Ignoring...")
+            pass
 
 
     model = MusicGen.get_pretrained('facebook/musicgen-melody')
