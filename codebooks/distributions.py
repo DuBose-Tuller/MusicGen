@@ -42,7 +42,7 @@ def load_codebooks(filename):
     if not codebooks:
         raise ValueError(f"No codebooks found in {filename}")
     
-    return np.array(codebooks)
+    return np.array(codebooks).squeeze()
 
 def get_filenames(config):
     files = []
@@ -82,11 +82,7 @@ def main(config_file):
     config = load_config(config_file)
     files = get_filenames(config)
     
-    datasets = [load_codebooks(file) for file in files]
-    
-    print(f"Shape of dataset 1: {datasets[0].shape}")
-    print(f"Shape of dataset 2: {datasets[1].shape}")
-    
+    datasets = [load_codebooks(file) for file in files]    
     jsd_per_codebook, cos_sim_per_codebook = compare_distributions(datasets[0], datasets[1])
     
     dataset_names = [data['dataset'] for data in config['datasets'][:2]]
