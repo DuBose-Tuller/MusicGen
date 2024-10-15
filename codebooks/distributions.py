@@ -37,12 +37,12 @@ def load_codebooks(filename):
         codebooks_group = f['codebooks']
         codebooks = []
         for key in codebooks_group.keys():
-            codebooks.append(codebooks_group[key][()])
+            codebooks.append(codebooks_group[key][()][0]) # codebooks come in w/ batch dimension
     
     if not codebooks:
         raise ValueError(f"No codebooks found in {filename}")
     
-    return np.array(codebooks).squeeze()
+    return codebooks  # Return as a list of arrays
 
 def get_filenames(config):
     files = []
@@ -59,17 +59,24 @@ def get_filenames(config):
         raise ValueError("Exactly two valid datasets are required")
     return files
 
-def compare_distributions(arr1, arr2):
-    print(f"Shape of array 1: {arr1.shape}")
-    print(f"Shape of array 2: {arr2.shape}")
-    n_codebooks = arr1.shape[1]
+def compare_distributions(dataset1, dataset2):
+    assert len(dataset1[0]) == len(dataset2[0])
+    n_codebooks = len(dataset1[0])
+
     jsd_per_codebook = []
     cos_sim_per_codebook = []
     
     for i in range(n_codebooks):
-        freq1 = np.bincount(arr1[:, i, :].flatten(), minlength=2049)[1:]
-        freq2 = np.bincount(arr2[:, i, :].flatten(), minlength=2049)[1:]
+        # Flatten all codebooks for this position
+        flat1 = np.concatenate([cb[i].flatten() for cb in dataset1])
+        flat2 = np.concatenate([cb[i].flatten() for cb in dataset2])
         
+        # Compute frequencies
+        max_value = max(flat1.max(), flat2.max())
+        freq1 = np.bincount(flat1, minlength=max_value+1)
+        freq2 = np.bincount(flat2, minlength=max_value+1)
+        
+        # Normalize to get probability distributions
         p1 = freq1 / freq1.sum()
         p2 = freq2 / freq2.sum()
         
