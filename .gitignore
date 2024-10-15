@@ -7,3 +7,4 @@
 **/*.wav
 **/__pycache__/
 /logs
+**/*.h5

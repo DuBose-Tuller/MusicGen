@@ -1,27 +1,31 @@
 import torch
-from torch import nn
 import torchaudio
 from audiocraft.models import MusicGen
 import json
 from tqdm import tqdm
 import os
 import argparse
+import h5py
+import numpy as np
+
+def save_processed_files(processed_files, log_file):
+    with h5py.File(log_file, 'a') as f:
+        if 'processed_files' in f:
+            del f['processed_files']  # Delete existing dataset
+        f.create_dataset('processed_files', data=np.array(list(processed_files), dtype=h5py.special_dtype(vlen=str)))
 
 def load_processed_files(log_file):
     if os.path.exists(log_file):
-        with open(log_file, 'r') as f:
-            return set(json.load(f))
+        with h5py.File(log_file, 'r') as f:
+            if 'processed_files' in f:
+                return set(f['processed_files'][()])
     return set()
-
-def save_processed_files(processed_files, log_file):
-    with open(log_file, 'w') as f:
-        json.dump(list(processed_files), f)
 
 def process_file(file, model, device="cuda"):
     codes = preprocess_waveform(file, model, device)
     gen_sequence = get_patterns(model, codes, device)
 
-    return gen_sequence.cpu().tolist()
+    return gen_sequence.cpu().numpy()
 
 
 def preprocess_waveform(filename, model, device='cuda'):
@@ -37,7 +41,7 @@ def preprocess_waveform(filename, model, device='cuda'):
 
     # Resample if necessary (MusicGen expects 32kHz)
     if sample_rate != 32000:
-        print(f"Sample rate is {sample_rate}, resampling to 32kHz...")
+        #print(f"Sample rate is {sample_rate}, resampling to 32kHz...")
         waveform = torchaudio.transforms.Resample(sample_rate, 32000)(waveform)
     
     # Ensure correct shape and device
@@ -83,16 +87,16 @@ def parse_args():
     # Prepare args
     if args.segment is None and args.stride is None:
         data_path = f"../data/{args.dataset}/raw/"
-        log_file = os.path.join(args.dataset, "raw", f"codebooks_processed.json")
-        output_file = os.path.join(args.dataset, "raw", f"codebooks.json")
+        log_file = os.path.join(args.dataset, "raw", "codebooks_processed.h5")
+        output_file = os.path.join(args.dataset, "raw", "codebooks.h5")
         os.makedirs(os.path.join(args.dataset, "raw"), exist_ok=True)
     else:
         segment = args.segment if args.segment is not None else "all"
         stride = args.stride if args.stride is not None else "none"
 
         data_path = f"../data/{args.dataset}/s{segment}-t{stride}/"
-        log_file = os.path.join(args.dataset, f"s{segment}-t{stride}", f"codebooks_processed.json")
-        output_file = os.path.join(args.dataset, f"s{segment}-t{stride}", f"codebooks.json")
+        log_file = os.path.join(args.dataset, f"s{segment}-t{stride}", "codebooks_processed.h5")
+        output_file = os.path.join(args.dataset, f"s{segment}-t{stride}", "codebooks.h5")
         os.makedirs(os.path.join(args.dataset, f"s{segment}-t{stride}"), exist_ok=True)
 
     return args, data_path, output_file, log_file
@@ -112,33 +116,37 @@ def main():
             print("Tried to override, but log file not found! Ignoring...")
             pass
 
-
     model = MusicGen.get_pretrained('facebook/musicgen-melody')
-    print("Succeessfully Loaded Model")
+    print("Successfully Loaded Model")
 
     processed_files = load_processed_files(log_file)
-    codebooks = {}
-
-    # Load existing codebooks if the file exists
-    if os.path.exists(output_file):
-        with open(output_file, 'r') as f:
-            codebooks = json.load(f)
 
     try:
-        for file in tqdm(os.listdir(data_path)):
-            full_path = os.path.join(data_path, file)
-            if full_path in processed_files or ".wav" not in full_path:
-                continue
+        with h5py.File(output_file, 'a') as f:
+            if 'codebooks' not in f:
+                codebooks_group = f.create_group('codebooks')
+            else:
+                codebooks_group = f['codebooks']
             
-            codebook = process_file(full_path, model)
-            codebooks[full_path] = codebook
-            processed_files.add(full_path)
-            
-            # Save progress
-            if len(processed_files) % 100 == 0:
-                save_processed_files(processed_files, log_file)
-                with open(output_file, 'w') as f:
-                    json.dump(codebooks, f)
+            for file in tqdm(os.listdir(data_path)):
+                full_path = os.path.join(data_path, file)
+                if full_path in processed_files or ".wav" not in full_path:
+                    continue
+                
+                codebook = process_file(full_path, model)
+                
+                # Check if dataset already exists
+                if full_path in codebooks_group:
+                    del codebooks_group[full_path]  # Delete existing dataset
+                
+                # Create new dataset
+                codebooks_group.create_dataset(full_path, data=codebook, compression="gzip")
+                
+                processed_files.add(full_path)
+                
+                # Save progress
+                if len(processed_files) % 100 == 0:
+                    save_processed_files(processed_files, log_file)
 
     except KeyboardInterrupt:
         print("Process interrupted. Saving progress...")
@@ -146,8 +154,6 @@ def main():
     finally:
         # Save final progress
         save_processed_files(processed_files, log_file)
-        with open(output_file, 'w') as f:
-            json.dump(codebooks, f)
 
     print(f"Processed {len(processed_files)} files. Results saved to {output_file}")
 
