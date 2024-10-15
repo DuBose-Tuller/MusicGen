@@ -31,10 +31,17 @@ def load_config(config_file):
 
 def load_codebooks(filename):
     with h5py.File(filename, 'r') as f:
+        if 'codebooks' not in f:
+            raise ValueError(f"No 'codebooks' group found in {filename}")
+        
         codebooks_group = f['codebooks']
         codebooks = []
         for key in codebooks_group.keys():
             codebooks.append(codebooks_group[key][()])
+    
+    if not codebooks:
+        raise ValueError(f"No codebooks found in {filename}")
+    
     return np.array(codebooks)
 
 def get_filenames(config):
@@ -45,6 +52,9 @@ def get_filenames(config):
         if os.path.exists(path):
             filename = os.path.join(path, "codebooks.h5")
             files.append(filename)
+        else:
+            print(f"Invalid file path specified: {path}")
+
     if len(files) != 2:
         raise ValueError("Exactly two valid datasets are required")
     return files
@@ -73,6 +83,9 @@ def main(config_file):
     files = get_filenames(config)
     
     datasets = [load_codebooks(file) for file in files]
+    
+    print(f"Shape of dataset 1: {datasets[0].shape}")
+    print(f"Shape of dataset 2: {datasets[1].shape}")
     
     jsd_per_codebook, cos_sim_per_codebook = compare_distributions(datasets[0], datasets[1])
     

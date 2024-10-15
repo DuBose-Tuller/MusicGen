@@ -113,13 +113,14 @@ def main():
             os.remove(log_file)
             os.remove(output_file)
         except FileNotFoundError:
-            print("Tried to override, but log file not found! Ignoring...")
+            print("Tried to override, but file not found! Ignoring...")
             pass
 
     model = MusicGen.get_pretrained('facebook/musicgen-melody')
     print("Successfully Loaded Model")
 
     processed_files = load_processed_files(log_file)
+    print(f"Found {len(processed_files)} processed files.")
 
     try:
         with h5py.File(output_file, 'a') as f:
@@ -135,12 +136,15 @@ def main():
                 
                 codebook = process_file(full_path, model)
                 
+                # Use a sanitized version of the full path as the dataset name
+                dataset_name = full_path.replace('/', '_').replace('\\', '_')
+                
                 # Check if dataset already exists
-                if full_path in codebooks_group:
-                    del codebooks_group[full_path]  # Delete existing dataset
+                if dataset_name in codebooks_group:
+                    del codebooks_group[dataset_name]  # Delete existing dataset
                 
                 # Create new dataset
-                codebooks_group.create_dataset(full_path, data=codebook, compression="gzip")
+                codebooks_group.create_dataset(dataset_name, data=codebook, compression="gzip")
                 
                 processed_files.add(full_path)
                 
