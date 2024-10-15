@@ -3,7 +3,7 @@ from scipy.stats import entropy
 from scipy.spatial.distance import cosine
 import yaml
 import os
-import json
+import h5py
 import matplotlib.pyplot as plt
 import seaborn as sns
 
@@ -30,11 +30,12 @@ def load_config(config_file):
         return yaml.safe_load(f)
 
 def load_codebooks(filename):
-    with open(filename, 'r') as f:
-        data = json.load(f)
-
-    codebooks = np.array(list(data.values()))
-    return codebooks.squeeze()
+    with h5py.File(filename, 'r') as f:
+        codebooks_group = f['codebooks']
+        codebooks = []
+        for key in codebooks_group.keys():
+            codebooks.append(codebooks_group[key][()])
+    return np.array(codebooks)
 
 def get_filenames(config):
     files = []
@@ -42,14 +43,15 @@ def get_filenames(config):
         sampling = f"s{data['segment']}-t{data['stride']}" if data['segment'] and data['stride'] else "raw"
         path = os.path.join(data['dataset'], sampling)
         if os.path.exists(path):
-            filename = os.path.join(path, "codebooks.json")
+            filename = os.path.join(path, "codebooks.h5")
             files.append(filename)
     if len(files) != 2:
         raise ValueError("Exactly two valid datasets are required")
     return files
 
 def compare_distributions(arr1, arr2):
-    print(arr1.shape)
+    print(f"Shape of array 1: {arr1.shape}")
+    print(f"Shape of array 2: {arr2.shape}")
     n_codebooks = arr1.shape[1]
     jsd_per_codebook = []
     cos_sim_per_codebook = []
