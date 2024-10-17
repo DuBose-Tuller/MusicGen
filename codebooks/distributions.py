@@ -90,6 +90,20 @@ def main(config_file):
     files = get_filenames(config)
     
     datasets = [load_codebooks(file) for file in files]    
+
+
+    codes = datasets[0]
+    import matplotlib.pyplot as plt
+
+
+    codes1 = codes[0][0][:100]
+    codes2 = codes[0][0][100:200]
+    plt.plot(range(100), codes1, "-")
+    plt.plot(range(100), codes2, "-")
+
+    plt.savefig("test.png")
+    exit()
+
     jsd_per_codebook, cos_sim_per_codebook = compare_distributions(datasets[0], datasets[1])
     
     dataset_names = [data['dataset'] for data in config['datasets'][:2]]
