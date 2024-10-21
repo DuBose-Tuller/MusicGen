@@ -666,7 +666,7 @@ class StreamingTransformer(StreamingModule):
         elif method == 'torch':
             return torch_checkpoint(layer, *args, use_reentrant=False, **kwargs)
         elif method.startswith('xformers'):
-            from xformers.checkpoint_fairinternal import checkpoint, _get_default_policy
+            from xformers.checkpoint_fairinternal import checkpoint, _get_default_policy # type: ignore
             if method == 'xformers_default':
                 # those operations will be saved, and not recomputed.
                 # According to Francisco we can get smarter policies but this is a good start.
@@ -739,7 +739,7 @@ def _verify_xformers_memory_efficient_compat():
 
 def _verify_xformers_internal_compat():
     try:
-        from xformers.checkpoint_fairinternal import checkpoint, _get_default_policy  # noqa
+        from xformers.checkpoint_fairinternal import checkpoint, _get_default_policy  # type: ignore # noqa
     except ImportError:
         raise ImportError(
             "Francisco's fairinternal xformers is not installed. Please install it and try again.\n"
