@@ -13,6 +13,8 @@ See `StreamingTransformer` for more information.
 Unlike regular PyTorch Transformer, we make the hard choice that batches are first.
 """
 
+from embeddings.state_manager import state_manager
+
 import typing as tp
 
 from einops import rearrange
@@ -711,17 +713,14 @@ class StreamingTransformer(StreamingModule):
             self._streaming_state['offsets'] = offsets + T
 
         ### DUBOSE'S BLOCK
-        # import traceback
-        # import sys
 
         # VERY HUERISTICY
+        if x.shape[1] > 1:
+            # print("Begin hijacking...")
+            state_manager.set_embedding(x.detach().cpu())
 
 
-        print(f"Transformer forward pass shape: {x.shape}")
-        
-        # from embeddings.embeddings import FILENAME
-        # with open(f"model_embeddings/{FILENAME}.json", "w") as f:
-        #     json.dump(x.tolist(), f)
+        # print(f"Transformer forward pass shape: {x.shape}")
 
         return x
 
