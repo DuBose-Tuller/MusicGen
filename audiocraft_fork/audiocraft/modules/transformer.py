@@ -710,6 +710,19 @@ class StreamingTransformer(StreamingModule):
         if self._is_streaming:
             self._streaming_state['offsets'] = offsets + T
 
+        ### DUBOSE'S BLOCK
+        # import traceback
+        # import sys
+
+        # VERY HUERISTICY
+
+
+        print(f"Transformer forward pass shape: {x.shape}")
+        
+        # from embeddings.embeddings import FILENAME
+        # with open(f"model_embeddings/{FILENAME}.json", "w") as f:
+        #     json.dump(x.tolist(), f)
+
         return x
 
     def make_optim_group(self):

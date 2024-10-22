@@ -366,6 +366,7 @@ class LMModel(StreamingModule):
             if condition_tensors:
                 # Preparing for CFG, predicting both conditional and unconditional logits.
                 sequence = torch.cat([sequence, sequence], dim=0)
+            print(f"_sample_next_token sequence shape: {sequence.shape}")
             all_logits = model(
                 sequence,
                 conditions=[], condition_tensors=condition_tensors)
