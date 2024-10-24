@@ -4,28 +4,50 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 import json
 import os
+import yaml
+import argparse
+from datetime import datetime
+import hashlib
 
 EMBEDDING_SIZE = 1536
+
+def load_config(config_file):
+    with open(config_file, 'r') as f:
+        return yaml.safe_load(f)
+
+def parse_arguments():
+    parser = argparse.ArgumentParser(description="Classification of embeddings")
+    parser.add_argument('--config', default='config.yaml', help='Path to configuration file')
+    parser.add_argument('--datasets', nargs='+', help='List of datasets to process')
+    parser.add_argument('--output', help='Output filename for the results')
+    return parser.parse_args()
+
+def merge_config(file_config, args):
+    if args.datasets:
+        file_config['datasets'] = [d for d in file_config['datasets'] if d['dataset'] in args.datasets]
+    return file_config
 
 def process_json(file):
     with open(file, "r") as f:
         embeddings_dict = json.load(f)
-
     embeddings = np.array(list(embeddings_dict.values()))
     return embeddings
 
-def get_filenames(sources):
+def get_filenames(config):
     files = []
-    for data in sources:
-        sampling = f"s{data['segment']}-t{data['stride']}"
+    for data in config['datasets']:
+        if data['segment'] and data['stride']:
+            sampling = f"s{data['segment']}-t{data['stride']}"
+        else:
+            sampling = "raw"
         path = os.path.join(data['dataset'], sampling)
         if os.path.exists(path):
             filename = os.path.join(path, f"{data['method']}_embeddings.json")
             files.append(filename)       
 
-    if files == []:
-        raise ValueError
-    
+    if not files:
+        raise ValueError("No valid files found")
+
     return files
     
 def construct_dataset(sources, verbose=False):
@@ -53,8 +75,8 @@ def multiclass_model(X, y):
     
     model = LogisticRegression(
         class_weight='balanced',
-        max_iter=1000,  # Increase from default 100
-        tol=1e-4        # Optionally, adjust tolerance
+        max_iter=1000,
+        tol=1e-4
     ).fit(X_train_scaled, y_train)
     
     y_pred = model.predict(X_test_scaled)
@@ -75,34 +97,64 @@ def multiclass_model(X, y):
     
     return matrix, metrics
 
+def generate_output_filename(config):
+    # Create a unique identifier based on the configuration
+    config_str = json.dumps(config, sort_keys=True)
+    config_hash = hashlib.md5(config_str.encode()).hexdigest()[:8]
+    
+    # Get the current timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    # Create the filename
+    filename = f"classifier_{timestamp}_{config_hash}.json"
+    
+    return filename
 
+def save_results(config, matrix, metrics, output_path):
+    results = {
+        "timestamp": datetime.now().isoformat(),
+        "config": config,
+        "confusion_matrix": matrix.tolist(),
+        "metrics": metrics,
+        "dataset_names": [d['dataset'] for d in config['datasets']]
+    }
+    
+    with open(output_path, 'w') as f:
+        json.dump(results, f, indent=2)
 
 def main():
-    config = [
-        {
-            "dataset": "acpas",
-            "method": "last",
-            "segment": "30",
-            "stride": "30"
-        },
-        {
-            "dataset": "CBF",
-            "method": "last",
-            "segment": "30",
-            "stride": "30"
-        }
-    ]
-    
-    files = get_filenames(config)
-    X, y = construct_dataset(files)
+    # Parse arguments and load config
+    args = parse_arguments()
+    file_config = load_config(args.config)
+    config = merge_config(file_config, args)
 
+    # Create output directory
+    output_dir = os.path.join("../results", "classifier")
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Generate output filename
+    output_filename = generate_output_filename(config)
+    output_path = os.path.join(output_dir, output_filename)
+
+    # Get files and process
+    files = get_filenames(config)
+    print("Processing files:", files)
+    
+    X, y = construct_dataset(files)
     cm, metrics = multiclass_model(X, y)
-    print(type(metrics))
+
+    print("\nResults:")
+    print("Confusion Matrix:")
     print(cm)
+    print(f"\nMetrics:")
     print(f"F1 Score: {metrics['f1']:0.2f}")
     print(f"Precision: {metrics['precision']:0.2f}")
     print(f"Recall: {metrics['recall']:0.2f}")
     print(f"ROC-AUC: {metrics['roc-auc']:0.2f}")
+
+    # Save results
+    save_results(config, cm, metrics, output_path)
+    print(f"\nResults have been saved to '{output_path}'")
 
 if __name__ == "__main__":
     main()

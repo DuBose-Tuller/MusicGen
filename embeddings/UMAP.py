@@ -87,7 +87,7 @@ def main():
     config = merge_config(file_config, args)
 
     # Create output directory
-    output_dir = os.path.join("../viz", "UMAP")
+    output_dir = os.path.join("../results", "UMAP")
     os.makedirs(output_dir, exist_ok=True)
 
     # Generate output filename
