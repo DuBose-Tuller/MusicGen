@@ -30,7 +30,7 @@ def process_file(file, model, method="last", device="cuda"):
     waveform, sample_rate = torchaudio.load(file)
     waveform = waveform.unsqueeze(0).to(device)
     
-    waveform = model.generate_continuation(waveform, sample_rate, progress=True)
+    waveform = model.generate_continuation(waveform, sample_rate)
     
     # Get the embedding that was captured during the transformer's forward pass
     embedding = state_manager.get_embedding()
@@ -74,7 +74,7 @@ def main():
     if args.segment == None:
         duration = 15
     else:
-        duration = args.segment
+        duration = float(args.segment)
     
     if args.override:
         try:
@@ -87,7 +87,7 @@ def main():
 
     model = MusicGen.get_pretrained('facebook/musicgen-melody')
     print("Succeessfully Loaded Model")
-    model.set_generation_params(duration=duration + 0.02)   
+    model.set_generation_params(duration=duration + 0.04)   
 
     processed_files = load_processed_files(log_file)
     embeddings = {}
