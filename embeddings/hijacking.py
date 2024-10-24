@@ -35,8 +35,6 @@ def process_file(file, model, method="last", device="cuda"):
     # Get the embedding that was captured during the transformer's forward pass
     embedding = state_manager.get_embedding()
 
-    print(embedding.shape)
-
     return embedding
 
 def parse_args():
@@ -89,7 +87,7 @@ def main():
 
     model = MusicGen.get_pretrained('facebook/musicgen-melody')
     print("Succeessfully Loaded Model")
-    model.set_generation_params(duration=duration + 1)   
+    model.set_generation_params(duration=duration + 0.02)   
 
     processed_files = load_processed_files(log_file)
     embeddings = {}
@@ -106,6 +104,7 @@ def main():
                 continue
             
             embedding = process_file(full_path, model, method=args.method)
+            embedding = embedding.numpy().tolist()
             embeddings[full_path] = embedding
             processed_files.add(full_path)
             

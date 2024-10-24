@@ -716,9 +716,7 @@ class StreamingTransformer(StreamingModule):
 
         # VERY HUERISTICY
         if x.shape[1] > 1:
-            # print("Begin hijacking...")
-            state_manager.set_embedding(x.detach().cpu())
-
+            state_manager.set_embedding(x[0,0,:].detach().cpu())
 
         # print(f"Transformer forward pass shape: {x.shape}")
 
