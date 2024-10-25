@@ -129,6 +129,7 @@ def multiclass_model(X, y, verbose=False):
             print(f"F1: {f1_score(y_test, y_pred, average=None)[i]:.3f}")
     
     return matrix, metrics
+
 def generate_output_filename(config):
     # Create a unique identifier based on the configuration
     config_str = json.dumps(config, sort_keys=True)
@@ -168,17 +169,8 @@ def main():
     files = get_filenames(config)
     print("Processing files:", files)
     
-    X, y = construct_dataset(files)
-    cm, metrics = multiclass_model(X, y)
-
-    print("\nResults:")
-    print("Confusion Matrix:")
-    print(cm)
-    print(f"\nMetrics:")
-    print(f"F1 Score: {metrics['f1']:0.2f}")
-    print(f"Precision: {metrics['precision']:0.2f}")
-    print(f"Recall: {metrics['recall']:0.2f}")
-    print(f"ROC-AUC: {metrics['roc-auc']:0.2f}")
+    X, y = construct_dataset(files, verbose=True)
+    cm, metrics = multiclass_model(X, y, verbose=True)
 
     # Save results
     output_filename = generate_output_filename(config)
