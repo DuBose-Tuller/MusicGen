@@ -2,6 +2,8 @@ from sklearn.metrics import f1_score, recall_score, precision_score, confusion_m
 import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+import h5py
 import json
 import os
 import yaml
@@ -27,11 +29,14 @@ def merge_config(file_config, args):
         file_config['datasets'] = [d for d in file_config['datasets'] if d['dataset'] in args.datasets]
     return file_config
 
-def process_json(file):
-    with open(file, "r") as f:
-        embeddings_dict = json.load(f)
-    embeddings = np.array(list(embeddings_dict.values()))
-    return embeddings
+def process_h5(file):
+    """Load embeddings from H5 file."""
+    embeddings = []
+    with h5py.File(file, 'r') as f:
+        emb_group = f['embeddings']
+        for name in emb_group:
+            embeddings.append(emb_group[name][()])
+    return np.array(embeddings)
 
 def get_filenames(config):
     files = []
@@ -42,33 +47,44 @@ def get_filenames(config):
             sampling = "raw"
         path = os.path.join(data['dataset'], sampling)
         if os.path.exists(path):
-            filename = os.path.join(path, f"{data['method']}_embeddings.json")
+            filename = os.path.join(path, f"{data['method']}_embeddings.h5")
             files.append(filename)       
 
     if not files:
         raise ValueError("No valid files found")
 
     return files
-    
+
 def construct_dataset(sources, verbose=False):
     X_arrays = []
     y_arrays = []
-    for (i, source) in enumerate(sources):
-        embeddings = process_json(source)
+    
+    for i, source in enumerate(sources):
+        embeddings = process_h5(source)
+        if verbose:
+            print(f"Dataset {i}: {embeddings.shape[0]} samples")
         labels = np.full((embeddings.shape[0],), i)
         X_arrays.append(embeddings)
         y_arrays.append(labels)
 
     X = np.concatenate(X_arrays, axis=0)
     y = np.concatenate(y_arrays, axis=None)
-
+    
+    if verbose:
+        for i in range(len(sources)):
+            print(f"Class {i} count: {np.sum(y == i)}")
+    
     return X, y
 
-def multiclass_model(X, y):
+def multiclass_model(X, y, verbose=False):
+    # Print initial class distribution
+    if verbose:
+        print("\nInitial class distribution:")
+        for i in range(len(np.unique(y))):
+            print(f"Class {i}: {np.sum(y == i)} samples")
+    
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
     
-    # Increase max_iter and add scaling
-    from sklearn.preprocessing import StandardScaler
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
@@ -76,27 +92,43 @@ def multiclass_model(X, y):
     model = LogisticRegression(
         class_weight='balanced',
         max_iter=1000,
-        tol=1e-4
+        tol=1e-6,
+        C=0.1
     ).fit(X_train_scaled, y_train)
     
     y_pred = model.predict(X_test_scaled)
-    matrix = confusion_matrix(y_test, y_pred)
+    y_prob = model.predict_proba(X_test_scaled)
     
-    # Additional metrics
-    f1 = f1_score(y_test, y_pred, average='macro')
-    recall = recall_score(y_test, y_pred, average='macro')
-    precision = precision_score(y_test, y_pred, average='macro')
-    roc_auc = roc_auc_score(y_test, y_pred)
-
+    # Print prediction distribution
+    if verbose:
+        print("\nPrediction distribution:")
+        for i in range(len(np.unique(y))):
+            print(f"Class {i}: {np.sum(y_pred == i)} predictions")
+    
+    matrix = confusion_matrix(y_test, y_pred)
     metrics = {
-        "f1": f1,
-        "recall": recall,
-        "precision": precision,
-        "roc-auc": roc_auc,
+        "f1": f1_score(y_test, y_pred, average='macro'),
+        "recall": recall_score(y_test, y_pred, average='macro'),
+        "precision": precision_score(y_test, y_pred, average='macro'),
+        "roc_auc": roc_auc_score(y_test, y_pred)
     }
     
+    # Add probability scores to metrics
+    metrics["confidence"] = {
+        "mean": np.mean(np.max(y_prob, axis=1)),
+        "std": np.std(np.max(y_prob, axis=1))
+    }
+    
+    # Print detailed per-class metrics if verbose
+    if verbose:
+        print("\nPer-class metrics:")
+        for i in range(len(np.unique(y))):
+            print(f"\nClass {i}:")
+            print(f"Precision: {precision_score(y_test, y_pred, average=None)[i]:.3f}")
+            print(f"Recall: {recall_score(y_test, y_pred, average=None)[i]:.3f}")
+            print(f"F1: {f1_score(y_test, y_pred, average=None)[i]:.3f}")
+    
     return matrix, metrics
-
 def generate_output_filename(config):
     # Create a unique identifier based on the configuration
     config_str = json.dumps(config, sort_keys=True)
@@ -132,10 +164,6 @@ def main():
     output_dir = os.path.join("../results", "classifier")
     os.makedirs(output_dir, exist_ok=True)
 
-    # Generate output filename
-    output_filename = generate_output_filename(config)
-    output_path = os.path.join(output_dir, output_filename)
-
     # Get files and process
     files = get_filenames(config)
     print("Processing files:", files)
@@ -153,6 +181,8 @@ def main():
     print(f"ROC-AUC: {metrics['roc-auc']:0.2f}")
 
     # Save results
+    output_filename = generate_output_filename(config)
+    output_path = os.path.join(output_dir, output_filename)
     save_results(config, cm, metrics, output_path)
     print(f"\nResults have been saved to '{output_path}'")
 
