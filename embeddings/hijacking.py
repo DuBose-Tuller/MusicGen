@@ -5,23 +5,44 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from audiocraft_fork.audiocraft.models import MusicGen
 from embeddings.state_manager import state_manager
 
-# import torch
-# from torch import nn
 import torchaudio
-import json
+import numpy as np
 from tqdm import tqdm
 import os
 import argparse
+import h5py
 
-def load_processed_files(log_file):
-    if os.path.exists(log_file):
-        with open(log_file, 'r') as f:
-            return set(json.load(f))
+def load_processed_files(h5_file):
+    """Load set of processed files from HDF5 file."""
+    if not os.path.exists(h5_file):
+        return set()
+    
+    try:
+        with h5py.File(h5_file, 'r') as f:
+            if 'processed_files' in f.attrs:
+                return set(f.attrs['processed_files'])
+    except OSError:
+        print(f"Warning: Could not read {h5_file}. Starting fresh.")
     return set()
 
-def save_processed_files(processed_files, log_file):
-    with open(log_file, 'w') as f:
-        json.dump(list(processed_files), f)
+def append_embedding(h5_file, filename, embedding):
+    """Append a single embedding to the HDF5 file."""
+    # Convert filename to a safe HDF5 dataset name
+    safe_name = filename.replace('/', '_').replace('\\', '_')
+    
+    # Open in append mode ('a')
+    with h5py.File(h5_file, 'a') as f:
+        # Create embeddings group if it doesn't exist
+        if 'embeddings' not in f:
+            f.create_group('embeddings')
+            
+        # Save the embedding
+        f['embeddings'].create_dataset(safe_name, data=np.array(embedding, dtype=np.float32))
+        
+        # Update processed files list
+        processed_files = set(f.attrs.get('processed_files', []))
+        processed_files.add(filename)
+        f.attrs['processed_files'] = list(processed_files)
 
 def process_file(file, model, method="last", device="cuda"):
     # Clear any previous state
@@ -47,28 +68,27 @@ def parse_args():
 
     args = parser.parse_args()
 
-    # Prepare args
+    # Prepare paths
     if args.segment is None and args.stride is None:
         data_path = f"data/{args.dataset}/raw/"
-        log_file = os.path.join("embeddings", args.dataset, "raw", f"{args.method}_processed_files.json")
-        output_file = os.path.join("embeddings", args.dataset, "raw", f"{args.method}_embeddings.json")
-        os.makedirs(os.path.join("embeddings", args.dataset, "raw"), exist_ok=True)
+        output_dir = os.path.join("embeddings", args.dataset, "raw")
     else:
         segment = args.segment if args.segment is not None else "all"
         stride = args.stride if args.stride is not None else "none"
-
         data_path = f"data/{args.dataset}/s{segment}-t{stride}/"
-        log_file = os.path.join("embeddings", args.dataset, f"s{segment}-t{stride}", f"{args.method}_processed_files.json")
-        output_file = os.path.join("embeddings", args.dataset, f"s{segment}-t{stride}", f"{args.method}_embeddings.json")
-        os.makedirs(os.path.join("embeddings", args.dataset, f"s{segment}-t{stride}"), exist_ok=True)
+        output_dir = os.path.join("embeddings", args.dataset, f"s{segment}-t{stride}")
 
-    return args, data_path, output_file, log_file
+    os.makedirs(output_dir, exist_ok=True)
+    
+    output_file = os.path.join(output_dir, f"{args.method}_embeddings.h5")
 
-def main(): 
-    args, data_path, output_file, log_file = parse_args()
+    return args, data_path, output_file
+
+def main():
+    args, data_path, output_file = parse_args()
 
     if not os.path.exists(data_path):
-        print("Could not find data folder " + data_path)
+        print(f"Could not find data folder {data_path}")
         raise NotImplementedError
     
     if args.segment == None:
@@ -78,7 +98,6 @@ def main():
     
     if args.override:
         try:
-            os.remove(log_file)
             os.remove(output_file)
         except FileNotFoundError:
             print("Tried to override, but log file not found! Ignoring...")
@@ -89,13 +108,8 @@ def main():
     print("Succeessfully Loaded Model")
     model.set_generation_params(duration=duration + 0.04)   
 
-    processed_files = load_processed_files(log_file)
-    embeddings = {}
-
-    # Load existing embeddings if the file exists
-    if os.path.exists(output_file):
-        with open(output_file, 'r') as f:
-            embeddings = json.load(f)
+    processed_files = load_processed_files(output_file)
+    files_processed = 0
 
     try:
         for file in tqdm(os.listdir(data_path)):
@@ -103,27 +117,13 @@ def main():
             if full_path in processed_files or ".wav" not in full_path:
                 continue
             
-            embedding = process_file(full_path, model, method=args.method)
-            embedding = embedding.numpy().tolist()
-            embeddings[full_path] = embedding
-            processed_files.add(full_path)
+            embedding = process_file(full_path, model, method=args.method).numpy()
             
-            # Save progress
-            if len(processed_files) % 100 == 0:
-                save_processed_files(processed_files, log_file)
-                with open(output_file, 'w') as f:
-                    json.dump(embeddings, f)
+            # Append this embedding to the HDF5 file
+            append_embedding(output_file, full_path, embedding)
+            files_processed += 1
 
     except KeyboardInterrupt:
-        print("Process interrupted. Saving progress...")
+        print("\nProcess interrupted. Progress has been saved.")
 
-    finally:
-        # Save final progress
-        save_processed_files(processed_files, log_file)
-        with open(output_file, 'w') as f:
-            json.dump(embeddings, f)
-
-    print(f"Processed {len(processed_files)} files. Results saved to {output_file}")
-
-# if __name__ == "__main__":
-#     main()
+    print(f"\nProcessed {files_processed} new files. All results saved to {output_file}")
