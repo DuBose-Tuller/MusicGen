@@ -25,15 +25,23 @@ def load_processed_files(h5_file):
         print(f"Warning: Could not read {h5_file}. Starting fresh.")
     return set()
 
-def save_progress(h5_file, embeddings_dict, processed_files):
-    """Save both embeddings and processed files to HDF5 file."""
-    with h5py.File(h5_file, 'w') as f:
-        # Save embeddings
-        emb_group = f.create_group('embeddings')
-        for filename, embedding in embeddings_dict.items():
-            emb_group.create_dataset(filename, data=np.array(embedding, dtype=np.float32))
+def append_embedding(h5_file, filename, embedding):
+    """Append a single embedding to the HDF5 file."""
+    # Convert filename to a safe HDF5 dataset name
+    safe_name = filename.replace('/', '_').replace('\\', '_')
+    
+    # Open in append mode ('a')
+    with h5py.File(h5_file, 'a') as f:
+        # Create embeddings group if it doesn't exist
+        if 'embeddings' not in f:
+            f.create_group('embeddings')
+            
+        # Save the embedding
+        f['embeddings'].create_dataset(safe_name, data=np.array(embedding, dtype=np.float32))
         
-        # Save processed files list as an attribute
+        # Update processed files list
+        processed_files = set(f.attrs.get('processed_files', []))
+        processed_files.add(filename)
         f.attrs['processed_files'] = list(processed_files)
 
 def process_file(file, model, method="last", device="cuda"):
@@ -63,12 +71,12 @@ def parse_args():
     # Prepare paths
     if args.segment is None and args.stride is None:
         data_path = f"data/{args.dataset}/raw/"
-        output_dir = os.path.join(args.dataset, "raw")
+        output_dir = os.path.join("embeddings", args.dataset, "raw")
     else:
         segment = args.segment if args.segment is not None else "all"
         stride = args.stride if args.stride is not None else "none"
         data_path = f"data/{args.dataset}/s{segment}-t{stride}/"
-        output_dir = os.path.join(args.dataset, f"s{segment}-t{stride}")
+        output_dir = os.path.join("embeddings", args.dataset, f"s{segment}-t{stride}")
 
     os.makedirs(output_dir, exist_ok=True)
     
@@ -101,14 +109,7 @@ def main():
     model.set_generation_params(duration=duration + 0.04)   
 
     processed_files = load_processed_files(output_file)
-    embeddings = {}
-
-    # Load existing embeddings if the file exists
-    if os.path.exists(output_file):
-        with h5py.File(output_file, 'r') as f:
-            emb_group = f['embeddings']
-            for filename in emb_group:
-                embeddings[filename] = emb_group[filename][()]
+    files_processed = 0
 
     try:
         for file in tqdm(os.listdir(data_path)):
@@ -116,20 +117,13 @@ def main():
             if full_path in processed_files or ".wav" not in full_path:
                 continue
             
-            embedding = process_file(full_path, model, method=args.method)
-            embedding = embedding.numpy()
-            embeddings[full_path] = embedding
-            processed_files.add(full_path)
+            embedding = process_file(full_path, model, method=args.method).numpy()
             
-            # Save progress periodically
-            if len(processed_files) % 100 == 0:
-                save_progress(output_file, embeddings, processed_files)
+            # Append this embedding to the HDF5 file
+            append_embedding(output_file, full_path, embedding)
+            files_processed += 1
 
     except KeyboardInterrupt:
-        print("Process interrupted. Saving progress...")
+        print("\nProcess interrupted. Progress has been saved.")
 
-    finally:
-        # Save final progress
-        save_progress(output_file, embeddings, processed_files)
-
-    print(f"Processed {len(processed_files)} files. Results saved to {output_file}")
+    print(f"\nProcessed {files_processed} new files. All results saved to {output_file}")
