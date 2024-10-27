@@ -712,11 +712,8 @@ class StreamingTransformer(StreamingModule):
         if self._is_streaming:
             self._streaming_state['offsets'] = offsets + T
 
-        ### DUBOSE'S BLOCK
-
-        # VERY HUERISTICY
-        if x.shape[1] > 1:
-            state_manager.set_embedding(x[0,0,:].detach().cpu())
+        # HIJACKING SECTION
+        state_manager.set_embedding_from_tensor(x)
 
         # print(f"Transformer forward pass shape: {x.shape}")
 

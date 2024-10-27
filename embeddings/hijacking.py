@@ -45,8 +45,9 @@ def append_embedding(h5_file, filename, embedding):
         f.attrs['processed_files'] = list(processed_files)
 
 def process_file(file, model, method="last", device="cuda"):
-    # Clear any previous state
+    # Clear any previous state and set method
     state_manager.clear_embedding()
+    state_manager.set_method(method)
     
     waveform, sample_rate = torchaudio.load(file)
     waveform = waveform.unsqueeze(0).to(device)

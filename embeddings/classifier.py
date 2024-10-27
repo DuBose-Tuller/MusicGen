@@ -22,6 +22,7 @@ def parse_arguments():
     parser.add_argument('--config', default='config.yaml', help='Path to configuration file')
     parser.add_argument('--datasets', nargs='+', help='List of datasets to process')
     parser.add_argument('--output', help='Output filename for the results')
+    parser.add_argument('--verbose', '-v', action="store_true", help="Extra print statements for debugging")
     return parser.parse_args()
 
 def merge_config(file_config, args):
@@ -143,6 +144,34 @@ def generate_output_filename(config):
     
     return filename
 
+def analyze_feature_space(X, y):
+    """Analyze the distribution of features between classes."""
+    
+    # Basic statistics per class
+    for i in range(len(np.unique(y))):
+        X_class = X[y == i]
+        print(f"\nClass {i} statistics:")
+        print(f"Mean magnitude: {np.linalg.norm(X_class, axis=1).mean():.3f}")
+        print(f"Std magnitude: {np.linalg.norm(X_class, axis=1).std():.3f}")
+        print(f"Mean: {X_class.mean():.3f}")
+        print(f"Std: {X_class.std():.3f}")
+        print(f"Min: {X_class.min():.3f}")
+        print(f"Max: {X_class.max():.3f}")
+    
+    # Feature-wise statistics
+    feature_diffs = []
+    for feat in range(X.shape[1]):
+        class_0_mean = X[y == 0, feat].mean()
+        class_1_mean = X[y == 1, feat].mean()
+        diff = abs(class_0_mean - class_1_mean)
+        feature_diffs.append((feat, diff))
+    
+    # Sort features by difference between classes
+    feature_diffs.sort(key=lambda x: x[1], reverse=True)
+    print("\nTop 10 most different features between classes:")
+    for feat, diff in feature_diffs[:10]:
+        print(f"Feature {feat}: {diff:.3f} difference")
+
 def save_results(config, matrix, metrics, output_path):
     results = {
         "timestamp": datetime.now().isoformat(),
@@ -169,8 +198,10 @@ def main():
     files = get_filenames(config)
     print("Processing files:", files)
     
-    X, y = construct_dataset(files, verbose=True)
-    cm, metrics = multiclass_model(X, y, verbose=True)
+    X, y = construct_dataset(files, verbose=args.verbose)
+    if args.verbose:
+        analyze_feature_space(X, y)
+    cm, metrics = multiclass_model(X, y, verbose=args.verbose)
 
     # Save results
     output_filename = generate_output_filename(config)
