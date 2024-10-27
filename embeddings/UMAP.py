@@ -80,7 +80,7 @@ def save_metadata(config, output_path):
         "config": config
     }
     
-    metadata_filename = os.path.splitext(output_path)[0] + "_metadata.json"
+    metadata_filename = os.path.splitext(output_path)[0] + "_metadata.yaml"
     
     with open(metadata_filename, 'w') as f:
         yaml.dump(metadata, f, indent=2)
