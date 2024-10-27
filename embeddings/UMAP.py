@@ -1,4 +1,4 @@
-import json
+import h5py
 import numpy as np
 import matplotlib.pyplot as plt
 from umap import UMAP
@@ -33,9 +33,13 @@ def merge_config(file_config, args):
     return file_config
 
 def load_embeddings(filename):
-    with open(filename, 'r') as f:
-        data = json.load(f)
-    return np.array(list(data.values()))
+    """Load embeddings from an HDF5 file."""
+    embeddings = []
+    with h5py.File(filename, 'r') as f:
+        emb_group = f['embeddings']
+        for key in emb_group.keys():
+            embeddings.append(emb_group[key][()])
+    return np.array(embeddings)
 
 def get_dataset_name(filename):
     return os.path.basename(os.path.dirname(os.path.dirname(filename)))
@@ -49,7 +53,7 @@ def get_filenames(config):
             sampling = "raw"
         path = os.path.join(data['dataset'], sampling)
         if os.path.exists(path):
-            filename = os.path.join(path, f"{data['method']}_embeddings.json")
+            filename = os.path.join(path, f"{data['method']}_embeddings.h5")
             files.append(filename)       
 
     if not files:
@@ -59,7 +63,7 @@ def get_filenames(config):
 
 def generate_output_filename(config):
     # Create a unique identifier based on the configuration
-    config_str = json.dumps(config, sort_keys=True)
+    config_str = yaml.dump(config, sort_keys=True)
     config_hash = hashlib.md5(config_str.encode()).hexdigest()[:8]
     
     # Get the current timestamp
@@ -79,7 +83,7 @@ def save_metadata(config, output_path):
     metadata_filename = os.path.splitext(output_path)[0] + "_metadata.json"
     
     with open(metadata_filename, 'w') as f:
-        json.dump(metadata, f, indent=2)
+        yaml.dump(metadata, f, indent=2)
 
 def main():
     args = parse_arguments()
@@ -134,7 +138,7 @@ def main():
     save_metadata(config, output_path)
 
     print(f"UMAP visualization has been saved as '{output_path}'")
-    print(f"Metadata has been saved as '{os.path.splitext(output_path)[0]}_metadata.json'")
+    print(f"Metadata has been saved as '{os.path.splitext(output_path)[0]}_metadata.yaml'")
 
 if __name__ == "__main__":
     main()
