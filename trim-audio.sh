@@ -9,6 +9,7 @@ fi
 # Default values
 segment_length=15
 stride_length=15
+sample_rate=32000
 
 # Parse command line arguments
 while getopts ":s:t:" opt; do
@@ -37,14 +38,28 @@ input_dir="$1"
 # Function to process a single dataset directory
 process_dataset() {
     local dataset_dir="$1"
-    local raw_dir="${dataset_dir}/raw"
-    local output_dir="${dataset_dir}/s${segment_length}-t${stride_length}"
+    local raw_dir="${dataset_dir}"
     
-    # Check if raw directory exists
-    if [ ! -d "$raw_dir" ]; then
-        echo "No 'raw' directory found in ${dataset_dir}. Skipping."
-        return
+    # If the input directory has a 'raw' subdirectory, use that
+    if [ -d "${dataset_dir}/raw" ]; then
+        raw_dir="${dataset_dir}/raw"
     fi
+    
+    # Determine the base directory for output
+    local base_dir=$(dirname "$dataset_dir")
+    local dataset_name=$(basename "$dataset_dir")
+    if [ "$raw_dir" = "${dataset_dir}/raw" ]; then
+        dataset_name=$(basename "$dataset_dir")
+    else
+        # If we're processing a raw directory directly, go up one level
+        base_dir=$(dirname "$base_dir")
+        dataset_name=$(basename $(dirname "$raw_dir"))
+    fi
+    
+    local output_dir="${base_dir}/${dataset_name}/s${segment_length}-t${stride_length}"
+    
+    echo "Processing dataset directory: $raw_dir"
+    echo "Output directory will be: $output_dir"
     
     # Check if output directory already exists
     if [ -d "$output_dir" ]; then
@@ -68,10 +83,15 @@ process_dataset() {
             # Remove any carriage returns from duration
             duration=$(echo "$duration" | tr -d '\r')
             
-            # If file is shorter than segment length, just copy it
+            # If file is shorter than segment length, just copy it with resampling
             if (( ${duration%.*} < $segment_length )); then
-                echo "File $file is shorter than segment length. Copying original file."
-                cp "$file" "${output_dir}/${filename}"
+                echo "File $file is shorter than segment length. Copying with resampling."
+                output_file="${output_dir}/${filename}"
+                if ffmpeg -i "$file" -ar $sample_rate -y "$output_file" >/dev/null 2>&1; then
+                    echo "Processed: $file -> $output_file"
+                else
+                    echo "Error processing $file. Skipping."
+                fi
                 continue
             fi
             
@@ -81,7 +101,7 @@ process_dataset() {
                 output_file="${output_dir}/${filename%.*}_${current_pos}.wav"
                 
                 if [ ! -f "$output_file" ]; then
-                    if ffmpeg -i "$file" -ss $current_pos -t $segment_length -c copy "$output_file" -y >/dev/null 2>&1; then
+                    if ffmpeg -i "$file" -ss $current_pos -t $segment_length -ar $sample_rate -y "$output_file" >/dev/null 2>&1; then
                         echo "Processed: $file -> $output_file"
                     else
                         echo "Error processing $file at position $current_pos. Skipping."
@@ -97,12 +117,29 @@ process_dataset() {
     done
 }
 
-# Process each dataset directory
-for dataset_dir in "$input_dir"/*; do
-    if [ -d "$dataset_dir" ]; then
-        echo "Processing dataset: $dataset_dir"
-        process_dataset "$dataset_dir"
+# Check if the input directory exists
+if [ ! -d "$input_dir" ]; then
+    echo "Error: Directory $input_dir does not exist"
+    exit 1
+fi
+
+# If the input directory contains a 'raw' subdirectory or is itself a raw directory,
+# process it directly. Otherwise, look for dataset subdirectories.
+if [ -d "${input_dir}/raw" ] || [[ $(basename "$input_dir") == "raw" ]]; then
+    process_dataset "$input_dir"
+else
+    # Check if we're already in a dataset directory
+    parent_dir=$(dirname "$input_dir")
+    if [ -d "${input_dir}/raw" ]; then
+        process_dataset "$input_dir"
+    else
+        # Process each dataset directory
+        for dataset_dir in "$input_dir"/*; do
+            if [ -d "$dataset_dir" ]; then
+                process_dataset "$dataset_dir"
+            fi
+        done
     fi
-done
+fi
 
 echo "Processing complete."
