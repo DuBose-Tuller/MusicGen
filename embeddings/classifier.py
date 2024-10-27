@@ -77,6 +77,29 @@ def construct_dataset(sources, verbose=False):
     
     return X, y
 
+def compute_metrics(y_test, y_pred, y_prob, is_binary=False):
+    """Compute classification metrics, handling both binary and multi-class cases."""
+    metrics = {
+        "f1": f1_score(y_test, y_pred, average='macro'),
+        "recall": recall_score(y_test, y_pred, average='macro'),
+        "precision": precision_score(y_test, y_pred, average='macro')
+    }
+
+    # Only compute ROC AUC for binary classification
+    if is_binary:
+        try:
+            metrics["roc_auc"] = roc_auc_score(y_test, y_prob[:, 1])
+        except Exception:
+            metrics["roc_auc"] = None
+    
+    # Add probability scores to metrics
+    metrics["confidence"] = {
+        "mean": float(np.mean(np.max(y_prob, axis=1))),
+        "std": float(np.std(np.max(y_prob, axis=1)))
+    }
+    
+    return metrics
+
 def multiclass_model(X, y, verbose=False):
     # Print initial class distribution
     if verbose:
@@ -94,7 +117,8 @@ def multiclass_model(X, y, verbose=False):
         class_weight='balanced',
         max_iter=1000,
         tol=1e-6,
-        C=0.1
+        C=0.1,
+        solver='lbfgs'
     ).fit(X_train_scaled, y_train)
     
     y_pred = model.predict(X_test_scaled)
@@ -107,18 +131,7 @@ def multiclass_model(X, y, verbose=False):
             print(f"Class {i}: {np.sum(y_pred == i)} predictions")
     
     matrix = confusion_matrix(y_test, y_pred)
-    metrics = {
-        "f1": f1_score(y_test, y_pred, average='macro'),
-        "recall": recall_score(y_test, y_pred, average='macro'),
-        "precision": precision_score(y_test, y_pred, average='macro'),
-        "roc_auc": roc_auc_score(y_test, y_pred)
-    }
-    
-    # Add probability scores to metrics
-    metrics["confidence"] = {
-        "mean": np.mean(np.max(y_prob, axis=1)),
-        "std": np.std(np.max(y_prob, axis=1))
-    }
+    metrics = compute_metrics(y_test, y_pred, y_prob, is_binary=len(np.unique(y)) == 2)
     
     # Print detailed per-class metrics if verbose
     if verbose:
@@ -146,9 +159,10 @@ def generate_output_filename(config):
 
 def analyze_feature_space(X, y):
     """Analyze the distribution of features between classes."""
+    n_classes = len(np.unique(y))
     
     # Basic statistics per class
-    for i in range(len(np.unique(y))):
+    for i in range(n_classes):
         X_class = X[y == i]
         print(f"\nClass {i} statistics:")
         print(f"Mean magnitude: {np.linalg.norm(X_class, axis=1).mean():.3f}")
@@ -158,19 +172,20 @@ def analyze_feature_space(X, y):
         print(f"Min: {X_class.min():.3f}")
         print(f"Max: {X_class.max():.3f}")
     
-    # Feature-wise statistics
-    feature_diffs = []
-    for feat in range(X.shape[1]):
-        class_0_mean = X[y == 0, feat].mean()
-        class_1_mean = X[y == 1, feat].mean()
-        diff = abs(class_0_mean - class_1_mean)
-        feature_diffs.append((feat, diff))
-    
-    # Sort features by difference between classes
-    feature_diffs.sort(key=lambda x: x[1], reverse=True)
-    print("\nTop 10 most different features between classes:")
-    for feat, diff in feature_diffs[:10]:
-        print(f"Feature {feat}: {diff:.3f} difference")
+    # Feature-wise statistics (only for binary classification)
+    if n_classes == 2:
+        feature_diffs = []
+        for feat in range(X.shape[1]):
+            class_0_mean = X[y == 0, feat].mean()
+            class_1_mean = X[y == 1, feat].mean()
+            diff = abs(class_0_mean - class_1_mean)
+            feature_diffs.append((feat, diff))
+        
+        # Sort features by difference between classes
+        feature_diffs.sort(key=lambda x: x[1], reverse=True)
+        print("\nTop 10 most different features between classes:")
+        for feat, diff in feature_diffs[:10]:
+            print(f"Feature {feat}: {diff:.3f} difference")
 
 def save_results(config, matrix, metrics, output_path):
     results = {
