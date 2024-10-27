@@ -59,14 +59,39 @@ process_dataset() {
             filename=$(basename "$file")
             duration=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$file" 2>/dev/null)
             
-            for start in $(seq 0 $stride_length $(echo "$duration - $segment_length" | bc)); do
-                output_file="${output_dir}/${filename%.*}_${start}.wav"
+            # Check if duration is valid
+            if [ -z "$duration" ]; then
+                echo "Warning: Could not determine duration for $file. Skipping."
+                continue
+            fi
+            
+            # Remove any carriage returns from duration
+            duration=$(echo "$duration" | tr -d '\r')
+            
+            # If file is shorter than segment length, just copy it
+            if (( ${duration%.*} < $segment_length )); then
+                echo "File $file is shorter than segment length. Copying original file."
+                cp "$file" "${output_dir}/${filename}"
+                continue
+            fi
+            
+            # Process longer files into segments
+            current_pos=0
+            while (( current_pos + segment_length <= ${duration%.*} )); do
+                output_file="${output_dir}/${filename%.*}_${current_pos}.wav"
+                
                 if [ ! -f "$output_file" ]; then
-                    ffmpeg -i "$file" -ss $start -t $segment_length -c copy "$output_file" -y >/dev/null 2>&1
-                    echo "Processed: $file -> $output_file"
+                    if ffmpeg -i "$file" -ss $current_pos -t $segment_length -c copy "$output_file" -y >/dev/null 2>&1; then
+                        echo "Processed: $file -> $output_file"
+                    else
+                        echo "Error processing $file at position $current_pos. Skipping."
+                        rm -f "$output_file" # Clean up potentially partial output file
+                    fi
                 else
                     echo "Skipping existing file: $output_file"
                 fi
+                
+                current_pos=$((current_pos + stride_length))
             done
         fi
     done
