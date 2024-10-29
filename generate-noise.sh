@@ -52,7 +52,7 @@ fi
 # Default values
 segment_length=""
 stride_length=""
-noise_levels=(0.25 0.50 0.75)  # Default noise levels (25%, 50%, 75%)
+noise_levels=(0.10 0.20 0.30)  # Default noise levels (25%, 50%, 75%)
 
 # Parse command line arguments
 while getopts ":s:t:n:" opt; do
@@ -107,15 +107,19 @@ process_directory_with_noise() {
             output_file="${output_dir}/${filename}"
             
             if [ ! -f "$output_file" ]; then
-                # Add noise using ffmpeg
-                ffmpeg -i "$file" -filter_complex \
-                    "[0:a]asplit=2[a][b];
-                     aevalsrc=random(0)*2-1:n=2:s=${sample_rate}[noise];
-                     [noise]volume=${noise_level}[noise2];
-                     [a][noise2]amix=inputs=2:duration=first[mixed];
-                     [mixed]volume=2[normalized];
-                     [normalized][b]amix=inputs=2:duration=first:weights=5 1" \
-                    "$output_file" -y >/dev/null 2>&1
+                # Get sample rate and duration
+                sample_rate=$(ffprobe -v error -select_streams a:0 -show_entries stream=sample_rate -of default=noprint_wrappers=1:nokey=1 "$file")
+                duration=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$file")
+                
+                # Add noise using ffmpeg with simplified filter chain
+                ffmpeg -i "$file" \
+                    -filter_complex "aevalsrc=random(0)*${noise_level}:d=${duration}[noise];[0:a][noise]amix=inputs=2" \
+                    "$output_file" -y
+
+                # Verify the output file was created successfully
+                if [ ! -s "$output_file" ]; then
+                    echo "Error: Failed to create non-empty file for $file"
+                fi
                 
                 echo "Processed: $file -> $output_file (${noise_percent}% noise)"
             else
