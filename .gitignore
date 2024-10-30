@@ -1,4 +1,5 @@
 /.venv
+/data
 **/*.ipynb_checkpoints/
 **/*.out
 **/*.json
@@ -8,3 +9,4 @@
 **/__pycache__/
 /logs
 **/*.h5
+!results/classifier/*.json
