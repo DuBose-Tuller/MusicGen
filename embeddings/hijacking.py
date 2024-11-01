@@ -52,7 +52,7 @@ def process_file(file, model, method="last", device="cuda"):
     waveform, sample_rate = torchaudio.load(file)
     num_samples = waveform.shape[1]
     waveform = waveform.unsqueeze(0).to(device)
-    duration = num_samples / sample_rate + 0.02 # guaruntee longer than waveform, but don't generate new tokens unnecessarily
+    duration = num_samples / sample_rate + 0.04 # guaruntee longer than waveform, but don't generate new tokens unnecessarily
     
     model.set_generation_params(duration=duration)  
     waveform = model.generate_continuation(waveform, sample_rate) #, progress=True)
