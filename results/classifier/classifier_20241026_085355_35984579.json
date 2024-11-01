@@ -1,0 +1,47 @@
+{
+  "timestamp": "2024-10-26T08:53:55.945624",
+  "config": {
+    "datasets": [
+      {
+        "dataset": "synthetic-low",
+        "method": "last",
+        "segment": null,
+        "stride": null
+      },
+      {
+        "dataset": "synthetic-high",
+        "method": "last",
+        "segment": null,
+        "stride": null
+      }
+    ],
+    "umap": {
+      "n_neighbors": 100,
+      "min_dist": 1
+    }
+  },
+  "confusion_matrix": [
+    [
+      52,
+      0
+    ],
+    [
+      0,
+      51
+    ]
+  ],
+  "metrics": {
+    "f1": 1.0,
+    "recall": 1.0,
+    "precision": 1.0,
+    "roc_auc": 1.0,
+    "confidence": {
+      "mean": 0.9992231782235571,
+      "std": 0.000616065891991077
+    }
+  },
+  "dataset_names": [
+    "synthetic-low",
+    "synthetic-high"
+  ]
+}
