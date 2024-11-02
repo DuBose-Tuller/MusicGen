@@ -19,53 +19,63 @@ def load_config(config_file):
         return yaml.safe_load(f)
 
 def parse_arguments():
-    parser = argparse.ArgumentParser(description="Classification of embeddings")
+    parser = argparse.ArgumentParser(description="Classification of embeddings by instrument")
     parser.add_argument('--config', default='config.yaml', help='Path to configuration file')
-    parser.add_argument('--datasets', nargs='+', help='List of datasets to process')
     parser.add_argument('--output', help='Output filename for the results')
-    parser.add_argument('--by-filename', action='store_true', help='Extract instrument from filename instead of folder structure')
-    parser.add_argument('--instrument-pattern', help='Regex pattern to extract instrument from filename when using --by-filename')
     parser.add_argument('--verbose', '-v', action="store_true", help="Extra print statements for debugging")
     return parser.parse_args()
 
-def merge_config(file_config, args):
-    if args.datasets:
-        file_config['datasets'] = [d for d in file_config['datasets'] if d['dataset'] in args.datasets]
-    return file_config
-
-def extract_instrument_from_path(file_path, by_filename=False, pattern=None):
-    """Extract instrument name either from parent folder or filename."""
-    path = Path(file_path)
-    if by_filename:
-        if pattern:
-            import re
-            match = re.search(pattern, path.name)
-            if match:
-                return match.group(1)
-            else:
-                raise ValueError(f"Could not extract instrument from filename {path.name} using pattern {pattern}")
-        else:
-            # Default behavior: split by underscore and take first part
-            return path.stem.split('_')[0]
+def get_data_filenames(dataset_path, segment=None, stride=None):
+    """Get the path to the data files directory."""
+    if segment is None and stride is None:
+        data_path = os.path.join("data", dataset_path, "raw")
     else:
-        # Extract from parent folder name
-        return path.parent.name
+        segment = segment if segment is not None else "all"
+        stride = stride if stride is not None else "none"
+        data_path = os.path.join("data", dataset_path, f"s{segment}-t{stride}")
+    
+    return data_path
 
-def process_h5_with_instruments(file, by_filename=False, pattern=None, verbose=False):
+def extract_instrument_from_path(file_path, pattern):
+    """Extract instrument name using regex pattern."""
+    import re
+    match = re.search(pattern, file_path)
+    if match:
+        return match.group(1)
+    else:
+        raise ValueError(f"Could not extract instrument from path {file_path} using pattern {pattern}")
+
+def get_class_names_from_data(data_path, pattern):
+    """Extract unique class names from the data directory structure."""
+    class_names = set()
+    for root, _, files in os.walk(data_path):
+        for file in files:
+            if file.endswith('.wav'):  # only process wav files
+                full_path = os.path.join(root, file)
+                try:
+                    instrument = extract_instrument_from_path(full_path, pattern)
+                    class_names.add(instrument)
+                except ValueError as e:
+                    print(f"Warning: {e}")
+                    continue
+    return sorted(list(class_names))
+
+def process_h5_with_instruments(h5_file, data_path, pattern, verbose=False):
     """Load embeddings from H5 file with instrument labels."""
     embeddings = []
     instruments = []
     
-    with h5py.File(file, 'r') as f:
+    with h5py.File(h5_file, 'r') as f:
         emb_group = f['embeddings']
         for name in emb_group:
-            instrument = extract_instrument_from_path(name, by_filename, pattern)
-
-            if verbose:
-                print(f"Found instrument: {instrument} from file {file}")
-
-            embeddings.append(emb_group[name][()])
-            instruments.append(instrument)
+            try:
+                instrument = extract_instrument_from_path(name, pattern)
+                embeddings.append(emb_group[name][()])
+                instruments.append(instrument)
+            except ValueError as e:
+                if verbose:
+                    print(f"Warning: {e}")
+                continue
             
     if verbose:
         unique_instruments = set(instruments)
@@ -76,16 +86,26 @@ def process_h5_with_instruments(file, by_filename=False, pattern=None, verbose=F
     
     return np.array(embeddings), instruments
 
-def construct_instrument_dataset(source, by_filename=False, pattern=None, verbose=False):
-    """Construct dataset with instrument labels from a single source."""
+def construct_instrument_dataset(h5_path, data_path, pattern, verbose=False):
+    """Construct dataset with instrument labels."""
     if verbose:
-        print(source)
+        print(f"Processing embeddings from: {h5_path}")
+        print(f"Using data path: {data_path}")
+        print(f"Using pattern: {pattern}")
     
-    X, instruments = process_h5_with_instruments(source, by_filename, pattern, verbose)
+    # Get all possible class names from the data directory
+    class_names = get_class_names_from_data(data_path, pattern)
+    if verbose:
+        print(f"\nFound {len(class_names)} unique instruments in data directory:")
+        print(", ".join(class_names))
+    
+    # Process the H5 file
+    X, instruments = process_h5_with_instruments(h5_path, data_path, pattern, verbose)
     
     # Convert instrument labels to numeric classes
     label_encoder = LabelEncoder()
-    y = label_encoder.fit_transform(instruments)
+    label_encoder.fit(class_names)  # Fit on all possible classes first
+    y = label_encoder.transform(instruments)
     
     if verbose:
         print("\nClass mapping:")
@@ -93,23 +113,6 @@ def construct_instrument_dataset(source, by_filename=False, pattern=None, verbos
             print(f"Class {i}: {instrument}")
     
     return X, y, label_encoder.classes_
-
-def get_filenames(config):
-    files = []
-    for data in config['datasets']:
-        if data['segment'] and data['stride']:
-            sampling = f"s{data['segment']}-t{data['stride']}"
-        else:
-            sampling = "raw"
-        path = os.path.join(data['dataset'], sampling)
-        if os.path.exists(path):
-            filename = os.path.join(path, f"{data['method']}_embeddings.h5")
-            files.append(filename)       
-
-    if not files:
-        raise ValueError("No valid files found")
-
-    return files
 
 def compute_metrics(y_test, y_pred, y_prob, is_binary=False):
     """Compute classification metrics, handling both binary and multi-class cases."""
@@ -178,49 +181,6 @@ def multiclass_model(X, y, verbose=False):
     
     return matrix, metrics
 
-def generate_output_filename(config):
-    # Create a unique identifier based on the configuration
-    config_str = json.dumps(config, sort_keys=True)
-    config_hash = hashlib.md5(config_str.encode()).hexdigest()[:8]
-    
-    # Get the current timestamp
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    
-    # Create the filename
-    filename = f"classifier_{timestamp}_{config_hash}.json"
-    
-    return filename
-
-def analyze_feature_space(X, y):
-    """Analyze the distribution of features between classes."""
-    n_classes = len(np.unique(y))
-    
-    # Basic statistics per class
-    for i in range(n_classes):
-        X_class = X[y == i]
-        print(f"\nClass {i} statistics:")
-        print(f"Mean magnitude: {np.linalg.norm(X_class, axis=1).mean():.3f}")
-        print(f"Std magnitude: {np.linalg.norm(X_class, axis=1).std():.3f}")
-        print(f"Mean: {X_class.mean():.3f}")
-        print(f"Std: {X_class.std():.3f}")
-        print(f"Min: {X_class.min():.3f}")
-        print(f"Max: {X_class.max():.3f}")
-    
-    # Feature-wise statistics (only for binary classification)
-    if n_classes == 2:
-        feature_diffs = []
-        for feat in range(X.shape[1]):
-            class_0_mean = X[y == 0, feat].mean()
-            class_1_mean = X[y == 1, feat].mean()
-            diff = abs(class_0_mean - class_1_mean)
-            feature_diffs.append((feat, diff))
-        
-        # Sort features by difference between classes
-        feature_diffs.sort(key=lambda x: x[1], reverse=True)
-        print("\nTop 10 most different features between classes:")
-        for feat, diff in feature_diffs[:10]:
-            print(f"Feature {feat}: {diff:.3f} difference")
-
 def save_results(config, matrix, metrics, class_names, output_path):
     results = {
         "timestamp": datetime.now().isoformat(),
@@ -236,35 +196,47 @@ def save_results(config, matrix, metrics, class_names, output_path):
 def main():
     # Parse arguments and load config
     args = parse_arguments()
-    file_config = load_config(args.config)
-    config = merge_config(file_config, args)
-
+    config = load_config(args.config)
+    
+    # Extract relevant configuration
+    dataset_config = config['datasets'][0]  # Use first dataset
+    pattern = config.get('instrument_pattern', r'^([^_]+)')  # Default pattern if not specified
+    
     # Create output directory
     output_dir = os.path.join("../results", "classifier")
     os.makedirs(output_dir, exist_ok=True)
-
-    # Get files and process
-    files = get_filenames(config)
-    assert len(files) == 1, "Currently only works with one dataset"
-
-    print("Processing files:", files)
+    
+    # Get paths
+    data_path = get_data_filenames(
+        dataset_config['dataset'],
+        dataset_config.get('segment'),
+        dataset_config.get('stride')
+    )
+    
+    h5_path = os.path.join(
+        dataset_config['dataset'],
+        f"s{dataset_config['segment']}-t{dataset_config['stride']}" if dataset_config['segment'] and dataset_config['stride'] else "raw",
+        f"{dataset_config['method']}_embeddings.h5"
+    )
     
     # Process dataset
     X, y, class_names = construct_instrument_dataset(
-        files[0],
-        by_filename=args.by_filename,
-        pattern=args.instrument_pattern,
+        h5_path,
+        data_path,
+        pattern,
         verbose=args.verbose
     )
     
-    if args.verbose:
-        analyze_feature_space(X, y)
+    # Train and evaluate model
     cm, metrics = multiclass_model(X, y, verbose=args.verbose)
-
-    # Save results
-    output_filename = generate_output_filename(config)
+    
+    # Generate output filename and save results
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    config_hash = hashlib.md5(json.dumps(config, sort_keys=True).encode()).hexdigest()[:8]
+    output_filename = f"instrument_classifier_{timestamp}_{config_hash}.json"
     output_path = os.path.join(output_dir, output_filename)
-    save_results(config, cm, metrics, output_path)
+    
+    save_results(config, cm, metrics, class_names, output_path)
     print(f"\nResults have been saved to '{output_path}'")
 
 if __name__ == "__main__":
