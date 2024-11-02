@@ -32,17 +32,55 @@ def merge_config(file_config, args):
         file_config['output']['filename'] = args.output
     return file_config
 
-def load_embeddings(filename):
-    """Load embeddings from an HDF5 file."""
+def load_embeddings(filename, dataset_config):
+    """Load embeddings from H5 file, handling potential subfolder structure."""
     embeddings = []
+    labels = []
+    dataset_name = dataset_config['dataset']
+    merge_subfolders = dataset_config.get('merge_subfolders', True)  # Default to merging
+    
     with h5py.File(filename, 'r') as f:
-        emb_group = f['embeddings']
-        for key in emb_group.keys():
-            embeddings.append(emb_group[key][()])
-    return np.array(embeddings)
+        embeddings_group = f['embeddings']
+        
+        if len(embeddings_group.keys()) == 0:
+            return np.array([]), []
+            
+        # Check if we have a hierarchical structure
+        has_subfolders = any(isinstance(embeddings_group[key], h5py.Group) 
+                           for key in embeddings_group.keys())
+        
+        if has_subfolders and not merge_subfolders:
+            # Handle hierarchical structure with separate classes for subfolders
+            for group_name in embeddings_group.keys():
+                group = embeddings_group[group_name]
+                if isinstance(group, h5py.Group):
+                    for name in group.keys():
+                        embeddings.append(group[name][()])
+                        labels.append(f"{dataset_name}/{group_name}")
+                else:
+                    # Handle any files in root level
+                    embeddings.append(group[()])
+                    labels.append(dataset_name)
+        else:
+            # Either no subfolders or merging subfolders
+            def process_group(group, current_path=""):
+                for name in group.keys():
+                    item = group[name]
+                    if isinstance(item, h5py.Group):
+                        process_group(item, current_path)
+                    else:
+                        embeddings.append(item[()])
+                        labels.append(dataset_name)
+                        
+            process_group(embeddings_group)
+    
+    return np.array(embeddings), labels
 
-def get_dataset_name(filename):
-    return os.path.basename(os.path.dirname(os.path.dirname(filename)))
+def get_dataset_name(filename, config_entry):
+    """Get dataset name, considering potential subfolder structure."""
+    base_name = os.path.basename(os.path.dirname(os.path.dirname(filename)))
+    merge_subfolders = config_entry.get('merge_subfolders', True)
+    return base_name if merge_subfolders else f"{base_name}/*"
 
 def get_filenames(config):
     files = []
@@ -105,11 +143,12 @@ def main():
     all_labels = []
     dataset_names = []
 
-    for i, file in enumerate(json_files):
-        embeddings = load_embeddings(file)
-        all_embeddings.append(embeddings)
-        all_labels.extend([i] * len(embeddings))
-        dataset_names.append(get_dataset_name(file))
+    for i, (file, dataset_config) in enumerate(zip(json_files, config['datasets'])):
+        embeddings, labels = load_embeddings(file, dataset_config)
+        if len(embeddings) > 0:
+            all_embeddings.append(embeddings)
+            all_labels.extend(labels)
+            dataset_names.extend(list(set(labels)))  # Get unique labels
 
     all_embeddings = np.vstack(all_embeddings)
     all_labels = np.array(all_labels)
@@ -122,13 +161,14 @@ def main():
     # Use a colormap that can handle an arbitrary number of datasets
     cmap = plt.get_cmap('tab20')  # This colormap supports up to 20 distinct colors
     
-    # Create a scatter plot for each dataset
-    for i, dataset in enumerate(dataset_names):
-        mask = all_labels == i
+    # Create a scatter plot for each unique label
+    unique_labels = sorted(set(all_labels))
+    for i, label in enumerate(unique_labels):
+        mask = np.array(all_labels) == label
         plt.scatter(umap_embeddings[mask, 0], umap_embeddings[mask, 1], 
-                    c=[cmap(i/len(dataset_names))], label=dataset, alpha=0.7)
+                   c=[cmap(i/len(unique_labels))], label=label, alpha=0.7)
 
-    plt.legend(title="Datasets")
+    plt.legend(title="Datasets", bbox_to_anchor=(1.05, 1), loc='upper left')
     plt.title("UMAP Visualization of Embeddings")
 
     plt.savefig(output_path, bbox_inches='tight')
