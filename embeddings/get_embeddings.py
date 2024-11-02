@@ -11,38 +11,68 @@ from tqdm import tqdm
 import os
 import argparse
 import h5py
+from pathlib import Path
 
-def load_processed_files(h5_file):
-    """Load set of processed files from HDF5 file."""
-    if not os.path.exists(h5_file):
-        return set()
-    
-    try:
-        with h5py.File(h5_file, 'r') as f:
-            if 'processed_files' in f.attrs:
-                return set(f.attrs['processed_files'])
-    except OSError:
-        print(f"Warning: Could not read {h5_file}. Starting fresh.")
-    return set()
-
-def append_embedding(h5_file, filename, embedding):
-    """Append a single embedding to the HDF5 file."""
-    # Convert filename to a safe HDF5 dataset name
-    safe_name = filename.replace('/', '_').replace('\\', '_')
-    
-    # Open in append mode ('a')
-    with h5py.File(h5_file, 'a') as f:
-        # Create embeddings group if it doesn't exist
-        if 'embeddings' not in f:
-            f.create_group('embeddings')
-            
-        # Save the embedding
-        f['embeddings'].create_dataset(safe_name, data=np.array(embedding, dtype=np.float32))
+class H5Manager:
+    """Manager for H5 file operations with improved error handling and hierarchy support."""
+    def __init__(self, h5_file):
+        self.h5_file = h5_file
+        self.processed_files = self._load_processed_files()
         
-        # Update processed files list
-        processed_files = set(f.attrs.get('processed_files', []))
-        processed_files.add(filename)
-        f.attrs['processed_files'] = list(processed_files)
+    def _load_processed_files(self):
+        """Load set of processed files from HDF5 file with improved error handling."""
+        if not os.path.exists(self.h5_file):
+            return set()
+        
+        try:
+            with h5py.File(self.h5_file, 'r') as f:
+                return set(f.attrs.get('processed_files', []))
+        except (OSError, RuntimeError) as e:
+            print(f"Warning: Could not read {self.h5_file}. Starting fresh. Error: {e}")
+            return set()
+
+    def _get_or_create_group(self, h5file, group_path):
+        """Creates nested groups if they don't exist and returns the deepest group."""
+        current_group = h5file
+        for group_name in group_path:
+            if group_name not in current_group:
+                current_group = current_group.create_group(group_name)
+            else:
+                current_group = current_group[group_name]
+        return current_group
+
+    def append_embedding(self, filepath, embedding):
+        """Append a single embedding to the HDF5 file with improved structure and error handling."""
+        filepath = Path(filepath)
+        relative_parts = filepath.relative_to(Path(data_path)).parts
+        group_path = relative_parts[:-1]  # All parts except filename
+        filename = relative_parts[-1]
+        
+        # Convert filename to a safe HDF5 dataset name
+        safe_name = filename.replace('/', '_').replace('\\', '_')
+                
+        with h5py.File(self.h5_file, 'a') as f:
+            # Create base embeddings group if it doesn't exist
+            if 'embeddings' not in f:
+                f.create_group('embeddings')
+            
+            # Navigate to or create the proper group hierarchy
+            current_group = self._get_or_create_group(f['embeddings'], group_path)
+            
+            # Save the embedding in the appropriate group
+            if safe_name in current_group:
+                del current_group[safe_name]  # Replace if exists
+            current_group.create_dataset(safe_name, data=np.array(embedding, dtype=np.float32))
+            
+            # Update processed files list
+            processed_files = set(f.attrs.get('processed_files', []))
+            processed_files.add(str(filepath))
+            f.attrs['processed_files'] = list(processed_files)
+            
+            # Update the instance's processed files
+            self.processed_files = processed_files
+                
+
 
 def process_file(file, model, method="last", device="cuda"):
     # Clear any previous state and set method
@@ -69,6 +99,7 @@ def parse_args():
     parser.add_argument("-t", "--stride", type=str, default=None, help="Stride length")
     parser.add_argument("-m", "--method", default="last", choices=["last", "mean"], help="Embedding method to use")
     parser.add_argument("-o", "--override", action="store_true", help="Override existing embedding file")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose output")
 
     args = parser.parse_args()
 
@@ -88,6 +119,26 @@ def parse_args():
 
     return args, data_path, output_file
 
+def process_directory(directory, h5_manager, model, method, verbose=False):
+    """Recursively process all WAV files in a directory and its subdirectories."""
+    for item in os.scandir(directory):
+        if item.is_file() and item.name.endswith('.wav'):
+            if item.path in h5_manager.processed_files:
+                if verbose:
+                    print(f"Skipping already processed file: {item.path}")
+                continue
+                
+            try:
+                embedding = process_file(item.path, model, method=method).numpy()
+                h5_manager.append_embedding(item.path, embedding)
+                if verbose:
+                    print(f"Processed: {item.path}")
+            except Exception as e:
+                print(f"Error processing {item.path}: {e}")
+                
+        elif item.is_dir():
+            process_directory(item.path, h5_manager, model, method, verbose)
+
 def main():
     args, data_path, output_file = parse_args()
 
@@ -95,38 +146,25 @@ def main():
         print(f"Could not find data folder {data_path}")
         raise NotImplementedError
     
-    if args.segment == None:
-        duration = 15
-    else:
-        duration = float(args.segment)
-    
-    if args.override:
+    if args.override and os.path.exists(output_file):
         try:
             os.remove(output_file)
-        except FileNotFoundError:
-            print("Tried to override, but log file not found! Ignoring...")
-            pass
-
+            print(f"Removed existing file: {output_file}")
+        except OSError as e:
+            print(f"Error removing file: {e}")
 
     model = MusicGen.get_pretrained('facebook/musicgen-melody')
-    print("Succeessfully Loaded Model")   
+    print("Successfully Loaded Model")
 
-    processed_files = load_processed_files(output_file)
-    files_processed = 0
-
+    h5_manager = H5Manager(output_file)
+    
     try:
-        for file in tqdm(os.listdir(data_path)):
-            full_path = os.path.join(data_path, file)
-            if full_path in processed_files or ".wav" not in full_path:
-                continue
-            
-            embedding = process_file(full_path, model, method=args.method).numpy()
-            
-            # Append this embedding to the HDF5 file
-            append_embedding(output_file, full_path, embedding)
-            files_processed += 1
-
+        process_directory(data_path, h5_manager, model, args.method, args.verbose)
     except KeyboardInterrupt:
         print("\nProcess interrupted. Progress has been saved.")
-
-    print(f"\nProcessed {files_processed} new files. All results saved to {output_file}")
+    except Exception as e:
+        print(f"\nAn error occurred: {e}")
+    finally:
+        total_processed = len(h5_manager.processed_files)
+        print(f"\nTotal files processed: {total_processed}")
+        print(f"Results saved to: {output_file}")
