@@ -15,8 +15,9 @@ from pathlib import Path
 
 class H5Manager:
     """Manager for H5 file operations with improved error handling and hierarchy support."""
-    def __init__(self, h5_file):
+    def __init__(self, h5_file, data_path):
         self.h5_file = h5_file
+        self.data_path = data_path
         self.processed_files = self._load_processed_files()
         
     def _load_processed_files(self):
@@ -44,22 +45,38 @@ class H5Manager:
     def append_embedding(self, filepath, embedding):
         """Append a single embedding to the HDF5 file with improved structure and error handling."""
         filepath = Path(filepath)
-        relative_parts = filepath.relative_to(Path(data_path)).parts
-        group_path = relative_parts[:-1]  # All parts except filename
-        filename = relative_parts[-1]
+        try:
+            relative_parts = filepath.relative_to(Path(self.data_path)).parts
+        except ValueError:
+            # If relative_to fails, just use the filename
+            relative_parts = (filepath.name,)
+            
+        # Handle both cases: with subfolders and without
+        if len(relative_parts) > 1:
+            group_path = relative_parts[:-1]  # Use subfolder structure
+            filename = relative_parts[-1]
+        else:
+            group_path = ()  # Empty tuple for root level
+            filename = relative_parts[0]
         
         # Convert filename to a safe HDF5 dataset name
         safe_name = filename.replace('/', '_').replace('\\', '_')
-                
+        
+
         with h5py.File(self.h5_file, 'a') as f:
             # Create base embeddings group if it doesn't exist
             if 'embeddings' not in f:
                 f.create_group('embeddings')
             
-            # Navigate to or create the proper group hierarchy
-            current_group = self._get_or_create_group(f['embeddings'], group_path)
+            # Get the proper group
+            if group_path:
+                # If we have subfolders, use the hierarchy
+                current_group = self._get_or_create_group(f['embeddings'], group_path)
+            else:
+                # If no subfolders, use embeddings group directly
+                current_group = f['embeddings']
             
-            # Save the embedding in the appropriate group
+            # Save the embedding
             if safe_name in current_group:
                 del current_group[safe_name]  # Replace if exists
             current_group.create_dataset(safe_name, data=np.array(embedding, dtype=np.float32))
@@ -71,7 +88,6 @@ class H5Manager:
             
             # Update the instance's processed files
             self.processed_files = processed_files
-                
 
 
 def process_file(file, model, method="last", device="cuda"):
@@ -121,7 +137,7 @@ def parse_args():
 
 def process_directory(directory, h5_manager, model, method, verbose=False):
     """Recursively process all WAV files in a directory and its subdirectories."""
-    for item in os.scandir(directory):
+    for item in tqdm(os.scandir(directory)):
         if item.is_file() and item.name.endswith('.wav'):
             if item.path in h5_manager.processed_files:
                 if verbose:
@@ -156,7 +172,7 @@ def main():
     model = MusicGen.get_pretrained('facebook/musicgen-melody')
     print("Successfully Loaded Model")
 
-    h5_manager = H5Manager(output_file)
+    h5_manager = H5Manager(output_file, data_path)
     
     try:
         process_directory(data_path, h5_manager, model, args.method, args.verbose)
