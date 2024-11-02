@@ -7,7 +7,6 @@ from embeddings.state_manager import state_manager
 
 import torchaudio
 import numpy as np
-from tqdm import tqdm
 import os
 import argparse
 import h5py
@@ -137,7 +136,7 @@ def parse_args():
 
 def process_directory(directory, h5_manager, model, method, verbose=False):
     """Recursively process all WAV files in a directory and its subdirectories."""
-    for item in tqdm(os.scandir(directory)):
+    for item in os.scandir(directory):
         if item.is_file() and item.name.endswith('.wav'):
             if item.path in h5_manager.processed_files:
                 if verbose:
