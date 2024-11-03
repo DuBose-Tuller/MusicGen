@@ -2,7 +2,7 @@ from sklearn.metrics import f1_score, recall_score, precision_score, confusion_m
 import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, LabelEncoder
 import h5py
 import json
 import os
@@ -30,14 +30,49 @@ def merge_config(file_config, args):
         file_config['datasets'] = [d for d in file_config['datasets'] if d['dataset'] in args.datasets]
     return file_config
 
-def process_h5(file):
-    """Load embeddings from H5 file."""
+def process_h5(file, dataset_config):
+    """Load embeddings from H5 file, handling potential subfolder structure."""
     embeddings = []
+    labels = []
+    dataset_name = dataset_config['dataset']
+    merge_subfolders = dataset_config.get('merge_subfolders', True)  # Default to merging
+    
     with h5py.File(file, 'r') as f:
-        emb_group = f['embeddings']
-        for name in emb_group:
-            embeddings.append(emb_group[name][()])
-    return np.array(embeddings)
+        embeddings_group = f['embeddings']
+        
+        if len(embeddings_group.keys()) == 0:
+            return np.array([]), []
+            
+        # Check if we have a hierarchical structure
+        has_subfolders = any(isinstance(embeddings_group[key], h5py.Group) 
+                           for key in embeddings_group.keys())
+        
+        if has_subfolders and not merge_subfolders:
+            # Handle hierarchical structure with separate classes for subfolders
+            for group_name in embeddings_group.keys():
+                group = embeddings_group[group_name]
+                if isinstance(group, h5py.Group):
+                    for name in group.keys():
+                        embeddings.append(group[name][()])
+                        labels.append(f"{dataset_name}/{group_name}")
+                else:
+                    # Handle any files in root level
+                    embeddings.append(group[()])
+                    labels.append(dataset_name)
+        else:
+            # Either no subfolders or merging subfolders
+            def process_group(group, current_path=""):
+                for name in group.keys():
+                    item = group[name]
+                    if isinstance(item, h5py.Group):
+                        process_group(item, current_path)
+                    else:
+                        embeddings.append(item[()])
+                        labels.append(dataset_name)
+                        
+            process_group(embeddings_group)
+    
+    return np.array(embeddings), labels
 
 def get_filenames(config):
     files = []
@@ -56,26 +91,35 @@ def get_filenames(config):
 
     return files
 
-def construct_dataset(sources, verbose=False):
+def construct_dataset(sources, configs, verbose=False):
+    """Construct dataset from multiple sources, handling subfolder structure."""
     X_arrays = []
-    y_arrays = []
+    labels = []
     
-    for i, source in enumerate(sources):
-        embeddings = process_h5(source)
+    for source, config in zip(sources, configs):
+        embeddings, src_labels = process_h5(source, config)
         if verbose:
-            print(f"Dataset {i}: {embeddings.shape[0]} samples")
-        labels = np.full((embeddings.shape[0],), i)
+            print(f"Dataset {config['dataset']}: {embeddings.shape[0]} samples")
+            unique_labels = sorted(set(src_labels))
+            for label in unique_labels:
+                count = sum(1 for l in src_labels if l == label)
+                print(f"  {label}: {count} samples")
+        
         X_arrays.append(embeddings)
-        y_arrays.append(labels)
+        labels.extend(src_labels)
 
     X = np.concatenate(X_arrays, axis=0)
-    y = np.concatenate(y_arrays, axis=None)
+    
+    # Convert string labels to numeric indices
+    label_encoder = LabelEncoder()
+    y = label_encoder.fit_transform(labels)
     
     if verbose:
-        for i in range(len(sources)):
-            print(f"Class {i} count: {np.sum(y == i)}")
+        print("\nFull dataset summary:")
+        for i, label in enumerate(label_encoder.classes_):
+            print(f"Class {i} ({label}): {sum(y == i)} samples")
     
-    return X, y
+    return X, y, label_encoder.classes_
 
 def compute_metrics(y_test, y_pred, y_prob, is_binary=False):
     """Compute classification metrics, handling both binary and multi-class cases."""
@@ -193,7 +237,7 @@ def save_results(config, matrix, metrics, output_path):
         "config": config,
         "confusion_matrix": matrix.tolist(),
         "metrics": metrics,
-        "dataset_names": [d['dataset'] for d in config['datasets']]
+        # "dataset_names": [d['dataset'] for d in config['datasets']]
     }
     
     with open(output_path, 'w') as f:
@@ -213,7 +257,7 @@ def main():
     files = get_filenames(config)
     print("Processing files:", files)
     
-    X, y = construct_dataset(files, verbose=args.verbose)
+    X, y, class_names = construct_dataset(files, config['datasets'], verbose=args.verbose)
     if args.verbose:
         analyze_feature_space(X, y)
     cm, metrics = multiclass_model(X, y, verbose=args.verbose)
