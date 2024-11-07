@@ -7,7 +7,7 @@ if ! command -v ffmpeg &> /dev/null; then
 fi
 
 # Default values
-mix_ratios=(0.2 0.5 0.8)  # Mix ratios to test
+mix_ratios=(0.5)  # Mix ratios to test
 output_dataset="mixed_experiment"  # Name for the new dataset
 segment_length=""
 stride_length=""
@@ -102,7 +102,7 @@ for perf_file in "$perf_dir"/*.wav; do
                                [1:a]aformat=sample_fmts=fltp:sample_rates=32000:channel_layouts=mono,aloop=0:1000:0[a2]; \
                                [a1][a2]amix=inputs=2:weights=${perf_vol} ${noise_vol}:duration=first[aout]" \
                 -map "[aout]" \
-                -ar 32000 -ac 1 "$output_path" -y
+                -ar 32000 -ac 1 "$output_path" -y >/dev/null
             
             echo "Created: $output_path"
         done
