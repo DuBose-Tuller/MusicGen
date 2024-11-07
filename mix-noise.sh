@@ -99,8 +99,8 @@ for perf_file in "$perf_dir"/*.wav; do
             # Mix audio using ffmpeg
             ffmpeg -i "$perf_file" -i "$noise_file" \
                 -filter_complex "[0:a]aformat=sample_fmts=fltp:sample_rates=32000:channel_layouts=mono[a1]; \
-                               [1:a]aformat=sample_fmts=fltp:sample_rates=32000:channel_layouts=mono,aloop=-1:2147483647:0[a2]; \
-                               [a1][a2]amix=inputs=2:weights=${perf_vol} ${noise_vol}[aout]" \
+                               [1:a]aformat=sample_fmts=fltp:sample_rates=32000:channel_layouts=mono,aloop=0:1000:0[a2]; \
+                               [a1][a2]amix=inputs=2:weights=${perf_vol} ${noise_vol}:duration=first[aout]" \
                 -map "[aout]" \
                 -ar 32000 -ac 1 "$output_path" -y
             
