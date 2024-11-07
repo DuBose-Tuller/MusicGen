@@ -8,18 +8,20 @@ fi
 
 # Default values
 mix_ratios=(0.2 0.5 0.8)  # Mix ratios to test
-dataset_name="mixed_experiment"  # Name for the new dataset
+output_dataset="mixed_experiment"  # Name for the new dataset
+segment_length=""
+stride_length=""
 
 # Parse command line arguments
-while getopts ":p:n:o:r:" opt; do
+while getopts ":o:r:s:t:" opt; do
   case $opt in
-    p) performance_dir="$OPTARG"  # Directory containing performance audio
-    ;;
-    n) noise_dir="$OPTARG"        # Directory containing noise audio
-    ;;
-    o) dataset_name="$OPTARG"     # Output dataset name
+    o) output_dataset="$OPTARG"     # Output dataset name
     ;;
     r) IFS=',' read -ra mix_ratios <<< "$OPTARG"  # Comma-separated mix ratios
+    ;;
+    s) segment_length="$OPTARG"
+    ;;
+    t) stride_length="$OPTARG"
     ;;
     \?) echo "Invalid option -$OPTARG" >&2
     exit 1
@@ -27,26 +29,52 @@ while getopts ":p:n:o:r:" opt; do
   esac
 done
 
-# Validate inputs
-if [ -z "$performance_dir" ] || [ -z "$noise_dir" ]; then
-    echo "Usage: $0 -p performance_dir -n noise_dir [-o output_dataset_name] [-r mix_ratios]"
-    echo "Example: $0 -p data/performances/raw -n data/noise/raw -o mixed_experiment -r 0.2,0.5,0.8"
+# Shift past the options
+shift $((OPTIND-1))
+
+# Get positional arguments
+if [ $# -ne 2 ]; then
+    echo "Usage: $0 [options] performance_dataset noise_dataset"
+    echo "Options:"
+    echo "  -o output_dataset    Name for the output dataset"
+    echo "  -r mix_ratios       Comma-separated list of mix ratios (e.g., 0.2,0.5,0.8)"
+    echo "  -s segment_length   Segment length in seconds"
+    echo "  -t stride_length    Stride length in seconds"
+    echo "Example: $0 -o mixed_experiment -r 0.2,0.5,0.8 performances noise"
     exit 1
 fi
 
-# Create output directory structure
-output_dir="data/${dataset_name}/raw"
+perf_dataset="$1"
+noise_dataset="$2"
+
+# Determine input and output directory structure based on segment/stride
+if [ -n "$segment_length" ] && [ -n "$stride_length" ]; then
+    subdir="s${segment_length}-t${stride_length}"
+else
+    subdir="raw"
+fi
+
+# Set up directory paths
+perf_dir="data/${perf_dataset}/${subdir}"
+noise_dir="data/${noise_dataset}/${subdir}"
+output_dir="data/${output_dataset}/${subdir}"
+
+# Validate inputs
+if [ ! -d "$perf_dir" ]; then
+    echo "Error: Performance directory not found: $perf_dir"
+    exit 1
+fi
+
+if [ ! -d "$noise_dir" ]; then
+    echo "Error: Noise directory not found: $noise_dir"
+    exit 1
+fi
+
+# Create output directory
 mkdir -p "$output_dir"
 
-# Function to normalize audio levels
-normalize_audio() {
-    local input="$1"
-    local output="$2"
-    ffmpeg -i "$input" -filter:a loudnorm -ar 32000 -ac 1 "$output" -y
-}
-
 # Process each performance file
-for perf_file in "$performance_dir"/*.wav; do
+for perf_file in "$perf_dir"/*.wav; do
     perf_name=$(basename "$perf_file" .wav)
     
     # Process each noise file
@@ -83,15 +111,19 @@ done
 
 echo "Processing complete. Dataset saved in: $output_dir"
 
-# Create metadata file
+# Create metadata file with proper JSON formatting
 metadata_file="${output_dir}/metadata.json"
-echo "{" > "$metadata_file"
-echo "  \"dataset_info\": {" >> "$metadata_file"
-echo "    \"name\": \"${dataset_name}\"," >> "$metadata_file"
-echo "    \"performance_source\": \"${performance_dir}\"," >> "$metadata_file"
-echo "    \"noise_source\": \"${noise_dir}\"," >> "$metadata_file"
-echo "    \"mix_ratios\": [${mix_ratios[@]}]" >> "$metadata_file"
-echo "  }" >> "$metadata_file"
-echo "}" >> "$metadata_file"
+{
+    echo "{"
+    echo "  \"dataset_info\": {"
+    echo "    \"name\": \"${output_dataset}\","
+    echo "    \"performance_source\": \"${perf_dataset}\","
+    echo "    \"noise_source\": \"${noise_dataset}\","
+    echo "    \"mix_ratios\": [$(printf "%.1f," "${mix_ratios[@]}" | sed 's/,$/')],"
+    echo "    \"segment_length\": \"${segment_length}\","
+    echo "    \"stride_length\": \"${stride_length}\""
+    echo "  }"
+    echo "}"
+} > "$metadata_file"
 
 echo "Metadata saved to: $metadata_file"
