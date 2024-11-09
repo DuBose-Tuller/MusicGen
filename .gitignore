@@ -9,4 +9,4 @@
 **/__pycache__/
 /logs
 **/*.h5
-!results/classifier/*.json
+# !results/classifier/*.json
