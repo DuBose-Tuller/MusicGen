@@ -4,7 +4,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from audiocraft_fork.audiocraft.models import MusicGen
 from embeddings.state_manager import state_manager
-from h5_processor import H5Manager  # Import the new H5Manager
+from embeddings.h5_processor import H5Manager  # Import the new H5Manager
 
 import torchaudio
 import numpy as np
