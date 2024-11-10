@@ -20,7 +20,7 @@ def parse_arguments():
     parser.add_argument('--config', default='config.yaml', help='Path to configuration file')
     parser.add_argument('--datasets', nargs='+', help='List of datasets to process')
     parser.add_argument('--perplexity', type=float, help='T-SNE perplexity parameter')
-    parser.add_argument('--n_components', type=int, default=2, help='Final number of dimensions to reduce to')
+    parser.add_argument('--n_components', type=int, help='Final number of dimensions to reduce to')
     parser.add_argument('--n_iter', type=int, help='Number of iterations for optimization')
     parser.add_argument('--pca_components', type=int, help='Number of PCA components for preprocessing')
     parser.add_argument('--random_seed', '-r', type=int, default=42, help='Random seed for reproducibility')
@@ -140,7 +140,7 @@ def main():
     tsne = TSNE(
         n_components=config['tsne']['n_components'],
         perplexity=config['tsne']['perplexity'],
-        n_iter=config['tsne']['n_iter'],
+        max_iter=config['tsne']['n_iter'],
         random_state=random_seed,
         verbose=args.verbose
     )
