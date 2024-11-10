@@ -23,7 +23,7 @@ def parse_arguments():
     parser.add_argument('--n_components', type=int, default=2, help='Final number of dimensions to reduce to')
     parser.add_argument('--n_iter', type=int, help='Number of iterations for optimization')
     parser.add_argument('--pca_components', type=int, help='Number of PCA components for preprocessing')
-    parser.add_argument('--random_seed', '-r', type=int, help='Random seed for reproducibility')
+    parser.add_argument('--random_seed', '-r', type=int, default=42, help='Random seed for reproducibility')
     parser.add_argument('--output', help='Output filename for the results')
     parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
     return parser.parse_args()
