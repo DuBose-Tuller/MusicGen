@@ -34,7 +34,7 @@ def merge_config(file_config, args):
             'min_dist': 0.1,
             'n_components': 2,
             'metric': 'euclidean',
-            'random_seed': 42
+            'random_seed': None
         }
     
     if args.datasets:
@@ -115,10 +115,10 @@ def main():
     output_dir = os.path.join("../results", "UMAP")
     os.makedirs(output_dir, exist_ok=True)
 
-    # Set random seed for reproducibility
     random_seed = config['umap']['random_seed']
-    np.random.seed(random_seed)
-
+    if random_seed is not None:
+        np.random.seed(random_seed)
+    
     # Process datasets using H5DataProcessor
     processor = H5DataProcessor(verbose=args.verbose)
     datasets = processor.process_configs(config['datasets'])
@@ -126,7 +126,7 @@ def main():
 
     if args.verbose:
         print(f"\nParameters:")
-        print(f"  Random seed: {random_seed}")
+        print(f"  Random seed: {'Not set' if random_seed is None else random_seed}")
         print(f"  n_neighbors: {config['umap']['n_neighbors']}")
         print(f"  min_dist: {config['umap']['min_dist']}")
         print(f"  n_components: {config['umap']['n_components']}")
@@ -134,14 +134,18 @@ def main():
         print(f"  Input dimension: {X.shape[1]}")
 
     # Create and fit UMAP model
-    umap_model = UMAP(
-        n_neighbors=config['umap']['n_neighbors'],
-        min_dist=config['umap']['min_dist'],
-        n_components=config['umap']['n_components'],
-        metric=config['umap']['metric'],
-        random_state=random_seed,
-        verbose=args.verbose
-    )
+    umap_kwargs = {
+        'n_neighbors': config['umap']['n_neighbors'],
+        'min_dist': config['umap']['min_dist'],
+        'n_components': config['umap']['n_components'],
+        'metric': config['umap']['metric'],
+        'verbose': args.verbose
+    }
+    # Only add random_state if seed was specified
+    if random_seed is not None:
+        umap_kwargs['random_state'] = random_seed
+    
+    umap_model = UMAP(**umap_kwargs)
     umap_embeddings = umap_model.fit_transform(X)
 
     # Save results and possibly create visualization
