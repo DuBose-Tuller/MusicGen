@@ -1,5 +1,4 @@
 import numpy as np
-import matplotlib.pyplot as plt
 from umap import UMAP
 import os
 import yaml
@@ -7,6 +6,8 @@ import argparse
 from datetime import datetime
 import hashlib
 import json
+from h5py import File as H5File
+import matplotlib.pyplot as plt
 from h5_processor import H5DataProcessor, DatasetConfig
 
 def load_config(config_file):
@@ -14,61 +15,96 @@ def load_config(config_file):
         return yaml.safe_load(f)
 
 def parse_arguments():
-    parser = argparse.ArgumentParser(description="UMAP visualization of embeddings")
+    parser = argparse.ArgumentParser(description="UMAP dimensionality reduction of embeddings")
     parser.add_argument('--config', default='config.yaml', help='Path to configuration file')
     parser.add_argument('--datasets', nargs='+', help='List of datasets to process')
     parser.add_argument('--n_neighbors', type=int, help='UMAP n_neighbors parameter')
     parser.add_argument('--min_dist', type=float, help='UMAP min_dist parameter')
-    parser.add_argument('--output', help='Output filename for the visualization')
+    parser.add_argument('--n_components', type=int, default=2, help='Number of dimensions to reduce to')
+    parser.add_argument('--metric', type=str, default='euclidean', help='Distance metric to use')
+    parser.add_argument('--random_seed', type=int, help='Random seed for reproducibility')
+    parser.add_argument('--output', help='Output filename for the results')
     parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
     return parser.parse_args()
 
 def merge_config(file_config, args):
+    if 'umap' not in file_config:
+        file_config['umap'] = {
+            'n_neighbors': 15,
+            'min_dist': 0.1,
+            'n_components': 2,
+            'metric': 'euclidean',
+            'random_seed': 42
+        }
+    
     if args.datasets:
         file_config['datasets'] = [d for d in file_config['datasets'] if d['dataset'] in args.datasets]
     if args.n_neighbors:
         file_config['umap']['n_neighbors'] = args.n_neighbors
     if args.min_dist:
         file_config['umap']['min_dist'] = args.min_dist
+    if args.n_components:
+        file_config['umap']['n_components'] = args.n_components
+    if args.metric:
+        file_config['umap']['metric'] = args.metric
+    if args.random_seed:
+        file_config['umap']['random_seed'] = args.random_seed
+    
     return file_config
 
-def generate_output_filename(config):
+def generate_output_filename(config, suffix):
     config_str = json.dumps(config, sort_keys=True)
     config_hash = hashlib.md5(config_str.encode()).hexdigest()[:8]
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return f"UMAP_{timestamp}_{config_hash}.png"
+    return f"umap_{timestamp}_{config_hash}{suffix}"
 
-def save_metadata(config, output_path):
-    """Save metadata in YAML format.
+def create_visualization(embeddings, labels, class_names, output_path):
+    """Create and save UMAP visualization."""
+    plt.figure(figsize=(12, 8))
+    cmap = plt.get_cmap('tab20')
     
-    Args:
-        config: Configuration dictionary
-        output_path: Path to the output image file
-    """
-    def convert_numpy(obj):
-        """Convert numpy types to python native types for YAML serialization."""
-        if isinstance(obj, (np.int_, np.intc, np.intp, np.int8,
-            np.int16, np.int32, np.int64, np.uint8,
-            np.uint16, np.uint32, np.uint64)):
-            return int(obj)
-        elif isinstance(obj, (np.float_, np.float16, np.float32, np.float64)):
-            return float(obj)
-        elif isinstance(obj, (np.ndarray,)):
-            return obj.tolist()
-        return obj
+    for i, class_name in enumerate(class_names):
+        mask = labels == i
+        plt.scatter(
+            embeddings[mask, 0],
+            embeddings[mask, 1],
+            c=[cmap(i/len(class_names))],
+            label=class_name,
+            alpha=0.7
+        )
 
-    metadata = {
-        "timestamp": datetime.now().isoformat(),
-        "config": config
-    }
+    plt.legend(title="Datasets")
+    plt.title("UMAP Visualization of Embeddings")
+    plt.savefig(output_path, bbox_inches='tight')
+    plt.close()
+
+def save_results(umap_embeddings, labels, class_names, config, output_dir):
+    """Save UMAP embeddings and optionally create visualization."""
+    # Save embeddings to H5 file
+    h5_filename = generate_output_filename(config, '.h5')
+    h5_path = os.path.join(output_dir, h5_filename)
     
-    # Convert all numpy types to native Python types
-    metadata = {k: convert_numpy(v) for k, v in metadata.items()}
+    with H5File(h5_path, 'w') as f:
+        # Save embeddings and labels
+        f.create_dataset('embeddings', data=umap_embeddings)
+        f.create_dataset('labels', data=labels)
+        f.create_dataset('class_names', data=np.array(class_names, dtype='S'))
+        
+        # Save metadata
+        metadata = {
+            'timestamp': datetime.now().isoformat(),
+            'config': config
+        }
+        f.attrs['metadata'] = json.dumps(metadata)
+
+    # Create visualization if dimensionality is 2
+    if umap_embeddings.shape[1] == 2:
+        png_filename = generate_output_filename(config, '.png')
+        png_path = os.path.join(output_dir, png_filename)
+        create_visualization(umap_embeddings, labels, class_names, png_path)
+        return h5_path, png_path
     
-    metadata_filename = os.path.splitext(output_path)[0] + "_metadata.yaml"
-    
-    with open(metadata_filename, 'w') as f:
-        yaml.dump(metadata, f, default_flow_style=False, sort_keys=False)
+    return h5_path, None
 
 def main():
     args = parse_arguments()
@@ -79,47 +115,43 @@ def main():
     output_dir = os.path.join("../results", "UMAP")
     os.makedirs(output_dir, exist_ok=True)
 
+    # Set random seed for reproducibility
+    random_seed = config['umap']['random_seed']
+    np.random.seed(random_seed)
+
     # Process datasets using H5DataProcessor
     processor = H5DataProcessor(verbose=args.verbose)
     datasets = processor.process_configs(config['datasets'])
     X, y, class_names = processor.combine_datasets(datasets)
 
-    # Generate output filename and path
-    output_filename = generate_output_filename(config)
-    output_path = os.path.join(output_dir, output_filename)
+    if args.verbose:
+        print(f"\nParameters:")
+        print(f"  Random seed: {random_seed}")
+        print(f"  n_neighbors: {config['umap']['n_neighbors']}")
+        print(f"  min_dist: {config['umap']['min_dist']}")
+        print(f"  n_components: {config['umap']['n_components']}")
+        print(f"  metric: {config['umap']['metric']}")
+        print(f"  Input dimension: {X.shape[1]}")
 
     # Create and fit UMAP model
     umap_model = UMAP(
         n_neighbors=config['umap']['n_neighbors'],
-        min_dist=config['umap']['min_dist']
+        min_dist=config['umap']['min_dist'],
+        n_components=config['umap']['n_components'],
+        metric=config['umap']['metric'],
+        random_state=random_seed,
+        verbose=args.verbose
     )
     umap_embeddings = umap_model.fit_transform(X)
 
-    # Create visualization
-    plt.figure(figsize=(12, 8))
-    cmap = plt.get_cmap('tab20')
-    
-    for i, class_name in enumerate(class_names):
-        mask = y == i
-        plt.scatter(
-            umap_embeddings[mask, 0],
-            umap_embeddings[mask, 1],
-            c=[cmap(i/len(class_names))],
-            label=class_name,
-            alpha=0.7
-        )
+    # Save results and possibly create visualization
+    h5_path, png_path = save_results(umap_embeddings, y, class_names, config, output_dir)
 
-    plt.legend(title="Datasets")
-    plt.title("UMAP Visualization of Embeddings")
-
-    plt.savefig(output_path, bbox_inches='tight')
-    plt.close()
-
-    # Save metadata
-    save_metadata(config, output_path)
-
-    print(f"UMAP visualization has been saved as '{output_path}'")
-    print(f"Metadata has been saved as '{os.path.splitext(output_path)[0]}_metadata.json'")
+    if args.verbose:
+        print(f"\nResults saved to: {h5_path}")
+        print(f"Reduced {len(y)} samples from {X.shape[1]} to {config['umap']['n_components']} dimensions")
+        if png_path:
+            print(f"Visualization saved to: {png_path}")
 
 if __name__ == "__main__":
     main()
