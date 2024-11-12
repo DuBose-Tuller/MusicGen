@@ -43,7 +43,25 @@ def load_and_normalize_audio(file_path, target_sr=32000):
     
     # Normalize to [-1, 1]
     waveform = waveform / (torch.max(torch.abs(waveform)) + 1e-8)
-    return waveform
+    return waveform, waveform.shape[1]
+
+def prepare_audio_pair(clean_wave, noise_wave, clean_length, noise_length):
+    """Prepare audio pair to have matching lengths using the shorter length."""
+    # Use the shorter length
+    target_length = min(clean_length, noise_length)
+    
+    # Trim both to target length
+    clean_wave = clean_wave[:, :target_length]
+    
+    # For noise, if it's shorter than target, repeat it
+    if noise_length < target_length:
+        repeats = target_length // noise_length + 1
+        noise_wave = noise_wave.repeat(1, repeats)
+    
+    # Trim noise to exact length
+    noise_wave = noise_wave[:, :target_length]
+    
+    return clean_wave, noise_wave, target_length
 
 def mix_noise(clean_wave, noise_wave, snr_db):
     """Mix noise with signal at specified SNR level."""
@@ -77,16 +95,18 @@ def process_file_pair(clean_file, noise_file, snr_range, model, reduced_dim, ver
     if verbose:
         print(f"\nProcessing:\nReference: {clean_file}\nNoise: {noise_file}")
     
-    # Load and prepare audio
-    clean_wave = load_and_normalize_audio(clean_file)
-    noise_wave = load_and_normalize_audio(noise_file)
+    # Load audio files
+    clean_wave, clean_length = load_and_normalize_audio(clean_file)
+    noise_wave, noise_length = load_and_normalize_audio(noise_file)
     
-    # Ensure noise is same length as clean signal
-    if noise_wave.shape[1] > clean_wave.shape[1]:
-        noise_wave = noise_wave[:, :clean_wave.shape[1]]
-    else:
-        noise_wave = torch.cat([noise_wave] * (clean_wave.shape[1] // noise_wave.shape[1] + 1), dim=1)
-        noise_wave = noise_wave[:, :clean_wave.shape[1]]
+    if verbose:
+        print(f"Clean audio length: {clean_length/32000:.2f}s")
+        print(f"Noise audio length: {noise_length/32000:.2f}s")
+        print(f"Using length: {min(clean_length, noise_length)/32000:.2f}s")
+    
+    # Prepare audio to same length
+    clean_wave, noise_wave, used_length = prepare_audio_pair(
+        clean_wave, noise_wave, clean_length, noise_length)
     
     # Get embeddings for all SNR levels
     embeddings = []
@@ -122,7 +142,8 @@ def process_file_pair(clean_file, noise_file, snr_range, model, reduced_dim, ver
     return {
         'reference': str(clean_file),
         'noise': str(noise_file),
-        'distances': distances
+        'distances': distances,
+        'length_seconds': used_length / 32000
     }
 
 def plot_results(results, snr_range, output_dir):
@@ -139,17 +160,22 @@ def plot_results(results, snr_range, output_dir):
         plt.plot(snr_range, result['distances'], marker='o')
         plt.xlabel('Signal-to-Noise Ratio (dB)')
         plt.ylabel('Distance from Clean Embedding (reduced space)')
-        plt.title(f'Embedding Distance vs. Noise Level\n{ref_name} + {noise_name}')
+        plt.title(f'Embedding Distance vs. Noise Level\n{ref_name} + {noise_name}\n'
+                 f'Length: {result["length_seconds"]:.2f}s')
         plt.grid(True)
         plt.savefig(os.path.join(output_dir, f"{output_name}_distance.png"))
         plt.close()
         
         # Save numerical results
         results_data = np.column_stack((snr_range, result['distances']))
+        header = (f"# Reference: {result['reference']}\n"
+                 f"# Noise: {result['noise']}\n"
+                 f"# Length: {result['length_seconds']:.2f}s\n"
+                 f"SNR_dB,Embedding_Distance")
         np.savetxt(os.path.join(output_dir, f"{output_name}_data.csv"),
                   results_data,
                   delimiter=",",
-                  header="SNR_dB,Embedding_Distance",
+                  header=header,
                   comments="")
 
 def main():
