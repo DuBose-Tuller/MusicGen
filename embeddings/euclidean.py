@@ -15,6 +15,13 @@ from scipy.spatial.distance import euclidean
 import matplotlib.pyplot as plt
 from umap import UMAP
 
+def create_run_directory(base_dir):
+    """Create a timestamped directory for this run."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_dir = os.path.join(base_dir, f"run_{timestamp}")
+    os.makedirs(run_dir, exist_ok=True)
+    return run_dir
+
 def load_config(config_file):
     with open(config_file, 'r') as f:
         return yaml.safe_load(f)
@@ -47,18 +54,12 @@ def load_and_normalize_audio(file_path, target_sr=32000):
 
 def prepare_audio_pair(clean_wave, noise_wave, clean_length, noise_length):
     """Prepare audio pair to have matching lengths using the shorter length."""
-    # Use the shorter length
     target_length = min(clean_length, noise_length)
-    
-    # Trim both to target length
     clean_wave = clean_wave[:, :target_length]
     
-    # For noise, if it's shorter than target, repeat it
     if noise_length < target_length:
         repeats = target_length // noise_length + 1
         noise_wave = noise_wave.repeat(1, repeats)
-    
-    # Trim noise to exact length
     noise_wave = noise_wave[:, :target_length]
     
     return clean_wave, noise_wave, target_length
@@ -90,23 +91,25 @@ def get_embedding(waveform, model, device="cuda"):
     embedding = state_manager.get_embedding()
     return embedding.numpy()
 
-def process_file_pair(clean_file, noise_file, snr_range, model, reduced_dim, verbose=False):
-    """Process a single pair of reference and noise files."""
+def collect_embeddings(ref_file, noise_file, snr_range, model, verbose=False):
+    """Collect embeddings for a reference-noise pair."""
     if verbose:
-        print(f"\nProcessing:\nReference: {clean_file}\nNoise: {noise_file}")
+        print(f"\nProcessing:\nReference: {ref_file}\nNoise: {noise_file}")
     
     # Load audio files
-    clean_wave, clean_length = load_and_normalize_audio(clean_file)
+    clean_wave, clean_length = load_and_normalize_audio(ref_file)
     noise_wave, noise_length = load_and_normalize_audio(noise_file)
     
     if verbose:
         print(f"Clean audio length: {clean_length/32000:.2f}s")
         print(f"Noise audio length: {noise_length/32000:.2f}s")
-        print(f"Using length: {min(clean_length, noise_length)/32000:.2f}s")
     
     # Prepare audio to same length
     clean_wave, noise_wave, used_length = prepare_audio_pair(
         clean_wave, noise_wave, clean_length, noise_length)
+    
+    if verbose:
+        print(f"Using length: {used_length/32000:.2f}s")
     
     # Get embeddings for all SNR levels
     embeddings = []
@@ -120,10 +123,24 @@ def process_file_pair(clean_file, noise_file, snr_range, model, reduced_dim, ver
         noisy_embedding = get_embedding(noisy_wave, model)
         embeddings.append(noisy_embedding)
     
-    # Convert to numpy array and reduce dimensionality
-    embeddings = np.array(embeddings)
+    return {
+        'reference': str(ref_file),
+        'noise': str(noise_file),
+        'embeddings': np.array(embeddings),
+        'length_seconds': used_length / 32000
+    }
+
+def reduce_embeddings(all_results, reduced_dim, verbose=False):
+    """Perform UMAP reduction on all embeddings together."""
+    # Collect all embeddings
+    all_embeddings = []
+    for result in all_results:
+        all_embeddings.extend(result['embeddings'])
+    all_embeddings = np.array(all_embeddings)
+    
     if verbose:
-        print(f"Reducing dimensionality from {embeddings.shape[1]} to {reduced_dim}")
+        print(f"\nPerforming UMAP reduction on {len(all_embeddings)} points")
+        print(f"Reducing from {all_embeddings.shape[1]} to {reduced_dim} dimensions")
     
     # Initialize and fit UMAP
     umap_model = UMAP(
@@ -133,23 +150,24 @@ def process_file_pair(clean_file, noise_file, snr_range, model, reduced_dim, ver
         min_dist=0.1,
         random_state=42
     )
-    reduced_embeddings = umap_model.fit_transform(embeddings)
+    reduced = umap_model.fit_transform(all_embeddings)
     
-    # Calculate distances in reduced space
-    reference_embedding = reduced_embeddings[0]  # First embedding is the reference
-    distances = [euclidean(reference_embedding, emb) for emb in reduced_embeddings[1:]]
+    # Distribute reduced embeddings back to results
+    idx = 0
+    for result in all_results:
+        n_embeddings = len(result['embeddings'])
+        result['reduced_embeddings'] = reduced[idx:idx + n_embeddings]
+        # Calculate distances in reduced space
+        result['distances'] = [
+            euclidean(result['reduced_embeddings'][0], emb)
+            for emb in result['reduced_embeddings'][1:]
+        ]
+        idx += n_embeddings
     
-    return {
-        'reference': str(clean_file),
-        'noise': str(noise_file),
-        'distances': distances,
-        'length_seconds': used_length / 32000
-    }
+    return all_results
 
 def plot_results(results, snr_range, output_dir):
     """Plot and save the results, grouped by reference file."""
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    
     # Group results by reference file
     grouped_results = {}
     for result in results:
@@ -161,7 +179,7 @@ def plot_results(results, snr_range, output_dir):
     # Create one plot per reference file
     for ref_path, ref_results in grouped_results.items():
         ref_name = Path(ref_path).stem
-        output_name = f"noise_impact_{ref_name}_{timestamp}"
+        output_name = f"noise_impact_{ref_name}"
         
         plt.figure(figsize=(12, 7))
         
@@ -197,8 +215,9 @@ def plot_results(results, snr_range, output_dir):
 def main():
     args = parse_arguments()
     
-    # Create output directory
-    os.makedirs(args.output, exist_ok=True)
+    # Create timestamped run directory
+    run_dir = create_run_directory(args.output)
+    print(f"Saving results to: {run_dir}")
     
     # Setup experiment parameters
     snr_range = np.linspace(args.min_snr, args.max_snr, args.snr_steps)
@@ -217,18 +236,26 @@ def main():
     if not reference_files or not noise_files:
         raise ValueError(f"No WAV files found in specified paths: {reference_files} or {noise_files}")
     
-    # Process all combinations
-    results = []
+    if args.verbose:
+        print(f"\nFound {len(reference_files)} reference files and {len(noise_files)} noise files")
+        print(f"Will process {len(reference_files) * len(noise_files)} combinations")
+        print(f"Total embeddings: {len(reference_files) * len(noise_files) * (args.snr_steps + 1)}")
+    
+    # Collect all embeddings
+    all_results = []
     for ref_file in reference_files:
         for noise_file in noise_files:
-            result = process_file_pair(
-                ref_file, noise_file, snr_range, model, args.reduced_dim, args.verbose
+            result = collect_embeddings(
+                ref_file, noise_file, snr_range, model, args.verbose
             )
-            results.append(result)
+            all_results.append(result)
+    
+    # Perform dimensionality reduction on all embeddings together
+    all_results = reduce_embeddings(all_results, args.reduced_dim, args.verbose)
     
     # Plot and save results
-    plot_results(results, snr_range, args.output)
-    print(f"Results saved to {args.output}")
+    plot_results(all_results, snr_range, run_dir)
+    print(f"Processing complete. Results saved in {run_dir}")
 
 if __name__ == "__main__":
     main()
