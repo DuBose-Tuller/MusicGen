@@ -10,3 +10,4 @@
 /logs
 **/*.h5
 # !results/classifier/*.json
+**/*.csv

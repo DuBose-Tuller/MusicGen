@@ -190,7 +190,6 @@ def main():
     # Load model
     print("Loading MusicGen model...")
     model = MusicGen.get_pretrained('facebook/musicgen-melody')
-    model.eval()
     
     # Get file lists
     reference_path = Path(args.reference)
