@@ -27,7 +27,7 @@ def parse_arguments():
     parser.add_argument('--max-snr', type=float, default=40, help='Maximum SNR in dB')
     parser.add_argument('--snr-steps', type=int, default=13, help='Number of SNR steps')
     parser.add_argument('--reduced-dim', type=int, default=5, help='Dimensionality after reduction')
-    parser.add_argument('--output', default='results/noise_analysis', help='Output directory')
+    parser.add_argument('--output', default='../results/noise_analysis', help='Output directory')
     parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
     return parser.parse_args()
 
@@ -147,36 +147,52 @@ def process_file_pair(clean_file, noise_file, snr_range, model, reduced_dim, ver
     }
 
 def plot_results(results, snr_range, output_dir):
-    """Plot and save the results."""
+    """Plot and save the results, grouped by reference file."""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
+    # Group results by reference file
+    grouped_results = {}
     for result in results:
-        ref_name = Path(result['reference']).stem
-        noise_name = Path(result['noise']).stem
-        output_name = f"noise_impact_{ref_name}_{noise_name}_{timestamp}"
+        ref_path = result['reference']
+        if ref_path not in grouped_results:
+            grouped_results[ref_path] = []
+        grouped_results[ref_path].append(result)
+    
+    # Create one plot per reference file
+    for ref_path, ref_results in grouped_results.items():
+        ref_name = Path(ref_path).stem
+        output_name = f"noise_impact_{ref_name}_{timestamp}"
         
-        # Plot distance vs SNR
-        plt.figure(figsize=(10, 6))
-        plt.plot(snr_range, result['distances'], marker='o')
+        plt.figure(figsize=(12, 7))
+        
+        # Plot line for each noise file
+        for result in ref_results:
+            noise_name = Path(result['noise']).stem
+            plt.plot(snr_range, result['distances'], marker='o', label=noise_name)
+        
         plt.xlabel('Signal-to-Noise Ratio (dB)')
         plt.ylabel('Distance from Clean Embedding (reduced space)')
-        plt.title(f'Embedding Distance vs. Noise Level\n{ref_name} + {noise_name}\n'
-                 f'Length: {result["length_seconds"]:.2f}s')
+        plt.title(f'Embedding Distance vs. Noise Level\n{ref_name}\n'
+                 f'Length: {ref_results[0]["length_seconds"]:.2f}s')
         plt.grid(True)
-        plt.savefig(os.path.join(output_dir, f"{output_name}_distance.png"))
+        plt.legend(title='Noise Source', bbox_to_anchor=(1.05, 1), loc='upper left')
+        plt.tight_layout()
+        plt.savefig(os.path.join(output_dir, f"{output_name}_distance.png"), bbox_inches='tight')
         plt.close()
         
         # Save numerical results
-        results_data = np.column_stack((snr_range, result['distances']))
-        header = (f"# Reference: {result['reference']}\n"
-                 f"# Noise: {result['noise']}\n"
-                 f"# Length: {result['length_seconds']:.2f}s\n"
-                 f"SNR_dB,Embedding_Distance")
-        np.savetxt(os.path.join(output_dir, f"{output_name}_data.csv"),
-                  results_data,
-                  delimiter=",",
-                  header=header,
-                  comments="")
+        for result in ref_results:
+            noise_name = Path(result['noise']).stem
+            results_data = np.column_stack((snr_range, result['distances']))
+            header = (f"# Reference: {result['reference']}\n"
+                     f"# Noise: {result['noise']}\n"
+                     f"# Length: {result['length_seconds']:.2f}s\n"
+                     f"SNR_dB,Embedding_Distance")
+            np.savetxt(os.path.join(output_dir, f"{output_name}_{noise_name}_data.csv"),
+                      results_data,
+                      delimiter=",",
+                      header=header,
+                      comments="")
 
 def main():
     args = parse_arguments()
