@@ -42,7 +42,7 @@ def get_embedding(waveform, model, device="cuda"):
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Analyze noise impact on audio embeddings")
-    parser.add_argument('--mixing-dir', required=True, help='Path to directory containing mixed audio files')
+    parser.add_argument('mixing-dir', help='Path to directory containing mixed audio files')
     parser.add_argument('--reduced-dim', type=int, default=5, help='Dimensionality after reduction')
     parser.add_argument('--output', default='../results/noise_analysis', help='Output directory')
     parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
