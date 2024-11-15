@@ -55,9 +55,9 @@ else
 fi
 
 # Set up directory paths
-perf_dir="data/${perf_dataset}/${subdir}"
-noise_dir="data/${noise_dataset}/${subdir}"
-output_dir="data/${output_dataset}/${subdir}"
+perf_dir="../data/${perf_dataset}/${subdir}"
+noise_dir="../data/${noise_dataset}/${subdir}"
+output_dir="../data/${output_dataset}/${subdir}"
 
 # Validate inputs
 if [ ! -d "$perf_dir" ]; then
