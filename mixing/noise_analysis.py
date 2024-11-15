@@ -42,7 +42,7 @@ def get_embedding(waveform, model, device="cuda"):
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Analyze noise impact on audio embeddings")
-    parser.add_argument('mixing-dir', help='Path to directory containing mixed audio files')
+    parser.add_argument('input', help='Path to directory containing mixed audio files')
     parser.add_argument('--reduced-dim', type=int, default=5, help='Dimensionality after reduction')
     parser.add_argument('--output', default='../results/noise_analysis', help='Output directory')
     parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
@@ -196,8 +196,8 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
     
     # Load mixing configuration and metadata
-    mixing_metadata = load_mixing_metadata(args.mixing_dir)
-    grouped_files = group_mixed_files(args.mixing_dir)
+    mixing_metadata = load_mixing_metadata(args.input)
+    grouped_files = group_mixed_files(args.input)
     
     if args.verbose:
         print(f"Found {len(grouped_files)} reference-noise pairs")
