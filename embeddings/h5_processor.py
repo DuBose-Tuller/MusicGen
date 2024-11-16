@@ -52,7 +52,9 @@ class H5Manager:
         """Get the set of processed files from the H5 file."""
         with h5py.File(self.h5_file, 'r') as f:
             if 'metadata' in f and 'processed_files' in f['metadata']:
-                return set(f['metadata']['processed_files'][()])
+                # Decode bytes to strings when reading from HDF5
+                return {p.decode('utf-8') if isinstance(p, bytes) else p 
+                    for p in f['metadata']['processed_files'][()]}
         return set()
     
     def _add_processed_file(self, filepath: str):
