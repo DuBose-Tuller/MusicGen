@@ -69,7 +69,7 @@ def save_mixed_audio(output_dir, clean_file, noise_file, noisy_signal, snr_db, s
     }
     
     # Save metadata
-    metadata_path = output_dir / f"{output_filename}.json"
+    metadata_path = output_dir / f"{output_filename[:-4]}.json" # exclude '.wav'
     with open(metadata_path, 'w') as f:
         json.dump(metadata, f, indent=2)
 
