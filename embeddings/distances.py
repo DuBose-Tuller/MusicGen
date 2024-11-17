@@ -126,4 +126,9 @@ def main():
     print("\nSummary statistics:")
     print(f"Global mean distance: {stats['global_stats']['mean']:.3f}")
     print(f"Global std deviation: {stats['global_stats']['std']:.3f}")
-    print("\nPer-class sample counts:
+    print("\nPer-class sample counts:")
+    for class_name, class_stat in stats["class_stats"].items():
+        print(f"{class_name}: {class_stat['sample_count']} samples")
+
+if __name__ == "__main__":
+    main()
