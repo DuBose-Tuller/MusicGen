@@ -6,8 +6,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from audiocraft.models import MusicGen
-from state_manager import state_manager
+from embeddings.state_manager import state_manager
 from scipy.spatial.distance import pdist, squareform
+from umap import UMAP
+from datetime import datetime
 
 def load_audio(file_path, device="cuda"):
     """Load and preprocess audio file."""
@@ -35,21 +37,58 @@ def get_embedding(waveform, model, device="cuda"):
     embedding = state_manager.get_embedding()
     return embedding.numpy()
 
-def plot_distance_matrix(distances, labels, output_path):
+def reduce_dimensionality(embeddings, n_components=5, n_runs=10):
+    """Perform multiple UMAP reductions and average the distances."""
+    distances_sum = None
+    
+    for i in range(n_runs):
+        umap_model = UMAP(
+            n_components=n_components,
+            metric='euclidean',
+            n_neighbors=15,
+            min_dist=0.1,
+            random_state=i  # Different seed for each run
+        )
+        reduced = umap_model.fit_transform(embeddings)
+        
+        # Calculate pairwise distances for this reduction
+        distances = squareform(pdist(reduced))
+        
+        if distances_sum is None:
+            distances_sum = distances
+        else:
+            distances_sum += distances
+    
+    # Return average distances
+    return distances_sum / n_runs
+
+def plot_distance_matrix(distances, labels, output_path, std_devs=None):
     """Create and save a heatmap of the distance matrix."""
-    plt.figure(figsize=(10, 8))
-    sns.heatmap(distances, annot=True, fmt='.3f', 
+    plt.figure(figsize=(12, 10))
+    
+    # Create annotation text with optional standard deviations
+    if std_devs is not None:
+        annot = np.array([[f'{d:.3f}\n±{s:.3f}' for d, s in zip(row, std_row)]
+                         for row, std_row in zip(distances, std_devs)])
+    else:
+        annot = np.around(distances, decimals=3)
+    
+    sns.heatmap(distances, annot=annot, fmt='s', 
                 xticklabels=labels, yticklabels=labels,
                 cmap='viridis')
-    plt.title('Pairwise Euclidean Distances between Audio Embeddings')
+    
+    plt.title('Average Pairwise Distances in Reduced Space\n'
+             f'Generated on {datetime.now().strftime("%Y-%m-%d %H:%M")}')
     plt.tight_layout()
     plt.savefig(output_path, bbox_inches='tight', dpi=300)
     plt.close()
 
 def main():
-    parser = argparse.ArgumentParser(description="Calculate pairwise distances between audio embeddings")
+    parser = argparse.ArgumentParser(description="Calculate average pairwise distances between audio embeddings")
     parser.add_argument('files', nargs='+', help='Audio files to analyze')
-    parser.add_argument('--output', default='distance_matrix.png', help='Output image path')
+    parser.add_argument('--output', default='average_distances.png', help='Output image path')
+    parser.add_argument('--reduced-dim', type=int, default=5, help='UMAP output dimensionality')
+    parser.add_argument('--umap-runs', type=int, default=10, help='Number of UMAP runs to average')
     parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
     args = parser.parse_args()
 
@@ -86,15 +125,26 @@ def main():
         print("No valid embeddings generated. Exiting.")
         return
 
-    # Calculate pairwise distances
+    if args.verbose:
+        print(f"\nPerforming {args.umap_runs} UMAP reductions...")
+
+    # Calculate average pairwise distances after dimensionality reduction
     embeddings = np.array(embeddings)
-    distances = squareform(pdist(embeddings))
+    avg_distances = reduce_dimensionality(
+        embeddings, 
+        n_components=args.reduced_dim,
+        n_runs=args.umap_runs
+    )
 
     # Create and save visualization
-    plot_distance_matrix(distances, labels, args.output)
+    plot_distance_matrix(avg_distances, labels, args.output)
     
     if args.verbose:
         print(f"\nResults saved to {args.output}")
+        print("\nAverage distances:")
+        for i, label1 in enumerate(labels):
+            for j, label2 in enumerate(labels[i+1:], i+1):
+                print(f"{label1} - {label2}: {avg_distances[i,j]:.3f}")
 
 if __name__ == "__main__":
     main()
