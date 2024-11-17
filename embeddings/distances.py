@@ -1,150 +1,129 @@
-import torch
-import torchaudio
-import argparse
-from pathlib import Path
+import h5py
 import numpy as np
+from scipy.spatial.distance import pdist, squareform
 import matplotlib.pyplot as plt
 import seaborn as sns
-from audiocraft.models import MusicGen
-from embeddings.state_manager import state_manager
-from scipy.spatial.distance import pdist, squareform
-from umap import UMAP
-from datetime import datetime
+import argparse
+from pathlib import Path
 
-def load_audio(file_path, device="cuda"):
-    """Load and preprocess audio file."""
-    waveform, sr = torchaudio.load(file_path)
-    if sr != 32000:
-        waveform = torchaudio.transforms.Resample(sr, 32000)(waveform)
-    
-    # Convert to mono if stereo
-    if waveform.shape[0] > 1:
-        waveform = torch.mean(waveform, dim=0, keepdim=True)
-    
-    return waveform.to(device)
+def load_umap_data(h5_path):
+    """Load UMAP embeddings and metadata from H5 file."""
+    with h5py.File(h5_path, 'r') as f:
+        embeddings = f['embeddings'][:]
+        labels = f['labels'][:]
+        # Decode bytes to strings for class names
+        class_names = [name.decode('utf-8') if isinstance(name, bytes) else name 
+                      for name in f['class_names'][:]]
+    return embeddings, labels, class_names
 
-def get_embedding(waveform, model, device="cuda"):
-    """Get embedding for audio using MusicGen model."""
-    state_manager.clear_embedding()
-    state_manager.set_method("last")
-    
-    waveform = waveform.unsqueeze(0) if waveform.dim() == 2 else waveform
-    duration = waveform.shape[-1] / 32000 + 0.04
-    
-    model.set_generation_params(duration=duration)
-    model.generate_continuation(waveform, 32000)
-    
-    embedding = state_manager.get_embedding()
-    return embedding.numpy()
+def calculate_distances(embeddings):
+    """Calculate pairwise Euclidean distances between all embeddings."""
+    return squareform(pdist(embeddings))
 
-def reduce_dimensionality(embeddings, n_components=5, n_runs=10):
-    """Perform multiple UMAP reductions and average the distances."""
-    distances_sum = None
-    
-    for i in range(n_runs):
-        umap_model = UMAP(
-            n_components=n_components,
-            metric='euclidean',
-            n_neighbors=15,
-            min_dist=0.1,
-            random_state=i  # Different seed for each run
-        )
-        reduced = umap_model.fit_transform(embeddings)
-        
-        # Calculate pairwise distances for this reduction
-        distances = squareform(pdist(reduced))
-        
-        if distances_sum is None:
-            distances_sum = distances
-        else:
-            distances_sum += distances
-    
-    # Return average distances
-    return distances_sum / n_runs
-
-def plot_distance_matrix(distances, labels, output_path, std_devs=None):
+def plot_distance_matrix(distances, output_path, title="Pairwise Euclidean Distances"):
     """Create and save a heatmap of the distance matrix."""
     plt.figure(figsize=(12, 10))
+    sns.heatmap(distances, cmap='viridis', 
+                xticklabels=False, yticklabels=False)
+    plt.title(title)
+    plt.xlabel("Samples")
+    plt.ylabel("Samples")
     
-    # Create annotation text with optional standard deviations
-    if std_devs is not None:
-        annot = np.array([[f'{d:.3f}\n±{s:.3f}' for d, s in zip(row, std_row)]
-                         for row, std_row in zip(distances, std_devs)])
-    else:
-        annot = np.around(distances, decimals=3)
+    # Add colorbar label
+    cbar = plt.gca().collections[0].colorbar
+    cbar.set_label('Euclidean Distance')
     
-    sns.heatmap(distances, annot=annot, fmt='s', 
-                xticklabels=labels, yticklabels=labels,
-                cmap='viridis')
-    
-    plt.title('Average Pairwise Distances in Reduced Space\n'
-             f'Generated on {datetime.now().strftime("%Y-%m-%d %H:%M")}')
     plt.tight_layout()
-    plt.savefig(output_path, bbox_inches='tight', dpi=300)
+    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.close()
+
+def plot_class_average_distances(distances, labels, class_names, output_path):
+    """Create and save a heatmap of average distances between classes."""
+    n_classes = len(class_names)
+    class_avg_distances = np.zeros((n_classes, n_classes))
+    
+    # Calculate average distances between classes
+    for i in range(n_classes):
+        for j in range(n_classes):
+            mask_i = labels == i
+            mask_j = labels == j
+            class_distances = distances[mask_i][:, mask_j]
+            class_avg_distances[i, j] = np.mean(class_distances)
+    
+    plt.figure(figsize=(10, 8))
+    sns.heatmap(class_avg_distances, annot=True, fmt='.3f',
+                xticklabels=class_names, yticklabels=class_names,
+                cmap='viridis')
+    plt.title('Average Distances Between Classes')
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close()
 
 def main():
-    parser = argparse.ArgumentParser(description="Calculate average pairwise distances between audio embeddings")
-    parser.add_argument('files', nargs='+', help='Audio files to analyze')
-    parser.add_argument('--output', default='average_distances.png', help='Output image path')
-    parser.add_argument('--reduced-dim', type=int, default=5, help='UMAP output dimensionality')
-    parser.add_argument('--umap-runs', type=int, default=10, help='Number of UMAP runs to average')
-    parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
+    parser = argparse.ArgumentParser(description="Analyze pairwise distances in UMAP embeddings")
+    parser.add_argument('input', help='Path to H5 file containing UMAP embeddings')
+    parser.add_argument('--output-dir', default='pairwise_analysis',
+                       help='Output directory for visualizations')
     args = parser.parse_args()
-
-    # Load model
-    if args.verbose:
-        print("Loading MusicGen model...")
-    model = MusicGen.get_pretrained('facebook/musicgen-melody')
-
-    # Process each file
-    embeddings = []
-    labels = []
     
-    if args.verbose:
-        print("\nProcessing files:")
+    # Create output directory
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
     
-    for file_path in args.files:
-        path = Path(file_path)
-        if not path.exists():
-            print(f"Warning: File not found: {file_path}")
-            continue
-            
-        if args.verbose:
-            print(f"Processing {path.name}...")
-        
-        try:
-            wave = load_audio(file_path)
-            emb = get_embedding(wave, model)
-            embeddings.append(emb)
-            labels.append(path.stem)
-        except Exception as e:
-            print(f"Error processing {file_path}: {e}")
-
-    if not embeddings:
-        print("No valid embeddings generated. Exiting.")
-        return
-
-    if args.verbose:
-        print(f"\nPerforming {args.umap_runs} UMAP reductions...")
-
-    # Calculate average pairwise distances after dimensionality reduction
-    embeddings = np.array(embeddings)
-    avg_distances = reduce_dimensionality(
-        embeddings, 
-        n_components=args.reduced_dim,
-        n_runs=args.umap_runs
+    # Load data
+    print(f"Loading data from {args.input}")
+    embeddings, labels, class_names = load_umap_data(args.input)
+    print(f"Loaded {len(embeddings)} embeddings with {len(class_names)} classes")
+    
+    # Calculate distances
+    print("Calculating pairwise distances...")
+    distances = calculate_distances(embeddings)
+    
+    # Create visualizations
+    print("Creating visualizations...")
+    plot_distance_matrix(
+        distances,
+        output_dir / "full_distance_matrix.png",
+        f"Pairwise Distances ({len(embeddings)} samples)"
     )
-
-    # Create and save visualization
-    plot_distance_matrix(avg_distances, labels, args.output)
     
-    if args.verbose:
-        print(f"\nResults saved to {args.output}")
-        print("\nAverage distances:")
-        for i, label1 in enumerate(labels):
-            for j, label2 in enumerate(labels[i+1:], i+1):
-                print(f"{label1} - {label2}: {avg_distances[i,j]:.3f}")
-
-if __name__ == "__main__":
-    main()
+    plot_class_average_distances(
+        distances,
+        labels,
+        class_names,
+        output_dir / "class_average_distances.png"
+    )
+    
+    # Save numerical results
+    print("Saving numerical results...")
+    np.save(output_dir / "distances.npy", distances)
+    
+    # Calculate and save summary statistics
+    stats = {
+        "global_stats": {
+            "mean": float(np.mean(distances)),
+            "std": float(np.std(distances)),
+            "min": float(np.min(distances[distances > 0])),  # Exclude self-distances
+            "max": float(np.max(distances))
+        },
+        "class_stats": {}
+    }
+    
+    # Calculate per-class statistics
+    for i, class_name in enumerate(class_names):
+        mask = labels == i
+        class_distances = distances[mask][:, mask]
+        stats["class_stats"][class_name] = {
+            "mean_internal": float(np.mean(class_distances[class_distances > 0])),
+            "std_internal": float(np.std(class_distances[class_distances > 0])),
+            "sample_count": int(np.sum(mask))
+        }
+    
+    # Save stats to file
+    np.save(output_dir / "distance_stats.npy", stats)
+    
+    print(f"Results saved to {output_dir}")
+    print("\nSummary statistics:")
+    print(f"Global mean distance: {stats['global_stats']['mean']:.3f}")
+    print(f"Global std deviation: {stats['global_stats']['std']:.3f}")
+    print("\nPer-class sample counts:
