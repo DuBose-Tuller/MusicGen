@@ -254,4 +254,4 @@ if __name__ == "__main__":
     torchaudio.save("tala_rhythm.wav", audio.unsqueeze(0), generator.sample_rate)
     
     # Generate a full dataset
-    generate_dataset("rhythm_dataset", num_samples=100)
+    generate_dataset("rhythm_dataset", num_samples=10)
