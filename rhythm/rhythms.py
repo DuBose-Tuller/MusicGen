@@ -5,11 +5,11 @@ from typing import List, Tuple, Optional
 import math
 
 class RhythmGenerator:
-    def __init__(self, sample_rate: int = 44100):
+    def __init__(self, sample_rate: int = 32000):
         self.sample_rate = sample_rate
         self.base_frequency = 440  # A4 note
         
-    def generate_tone(self, duration: float, amplitude: float = 0.5, accent_level: int = 1) -> torch.Tensor:
+    def generate_tone(self, duration: float, amplitude: float = 0.5, accent: int = 1) -> torch.Tensor:
         """Generate a single tone with a simple envelope.
         
         Args:
@@ -21,19 +21,19 @@ class RhythmGenerator:
         t = torch.arange(num_samples, dtype=torch.float32) / self.sample_rate
         
         # Different characteristics for each accent level
-        if accent_level == 3:  # Sam - strongest accent
+        if accent == 3:  # Sam - strongest accent
             frequency = self.base_frequency * 0.75  # Lower pitch
             amplitude *= 2.0  # Loudest
             attack = int(0.015 * self.sample_rate)  # 15ms attack
             decay = int(0.15 * self.sample_rate)    # 150ms decay
             release = int(0.15 * self.sample_rate)  # 150ms release
-        elif accent_level == 2:  # Tali - strong subdivision
+        elif accent == 2:  # Tali - strong subdivision
             frequency = self.base_frequency * 0.8   # Slightly lower pitch
             amplitude *= 1.5  # Louder
             attack = int(0.01 * self.sample_rate)   # 10ms attack
             decay = int(0.1 * self.sample_rate)     # 100ms decay
             release = int(0.1 * self.sample_rate)   # 100ms release
-        elif accent_level == 1:  # Regular beat
+        elif accent == 1:  # Regular beat
             frequency = self.base_frequency
             attack = int(0.005 * self.sample_rate)  # 5ms attack
             decay = int(0.05 * self.sample_rate)    # 50ms decay
@@ -177,10 +177,10 @@ def generate_dataset(output_dir: str, num_samples: int = 100):
     
     # 1. Western patterns (2=strong beat, 1=weak beat, 0=rest)
     western_patterns = [
-        [2, 1, 2, 1],  # Simple duple (2/4)
-        [2, 1, 1, 2, 1, 1],  # Simple triple (3/4)
+        # [2, 1, 2, 1],  # Simple duple (2/4)
+        [2, 1, 1],  # Simple triple (3/4)
         [2, 1, 1, 1],  # Simple quadruple (4/4) with emphasis on 1
-        [2, 1, 2, 1, 2],  # Simple quintuple (5/4)
+        # [2, 1, 2, 1, 2],  # Simple quintuple (5/4)
     ]
     
     # 2. Odd ratio patterns
@@ -238,20 +238,6 @@ def generate_dataset(output_dir: str, num_samples: int = 100):
 if __name__ == "__main__":
     # Example usage
     generator = RhythmGenerator()
-    
-    # Generate a Western rhythm (4/4 time with accents)
-    pattern = [2, 1, 1, 1]  # Strong beat on 1, weak beats on 2,3,4
-    audio = generator.generate_western_rhythm(pattern, repeats=4, tempo=120)
-    torchaudio.save("western_rhythm.wav", audio.unsqueeze(0), generator.sample_rate)
-    
-    # Generate an odd ratio rhythm (3:2)
-    audio = generator.generate_odd_ratio_rhythm((3, 2), cycles=8, tempo=120)
-    torchaudio.save("odd_ratio_rhythm.wav", audio.unsqueeze(0), generator.sample_rate)
-    
-    # Generate a tala pattern (Teentaal - 16 beats)
-    pattern = [2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]  # Sam on first beat
-    audio = generator.generate_tala_pattern(pattern, 16, repeats=4, tempo=120)
-    torchaudio.save("tala_rhythm.wav", audio.unsqueeze(0), generator.sample_rate)
     
     # Generate a full dataset
     generate_dataset("rhythm_dataset", num_samples=10)
