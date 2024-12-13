@@ -150,30 +150,57 @@ class H5DataProcessor:
         filename = os.path.join(path, f"{method}_embeddings.h5")
         return filename
     
-    def get_class_name(self, config: DatasetConfig, subfolder: str = "") -> str:
+    def parse_subfolder(self, subfolder: str) -> dict:
+        """Parse subfolder name to extract attributes."""
+        attributes = {}
+        parts = subfolder.replace('-', '_').split('_')
+        
+        for part in parts:
+            if part.startswith('s') and part[1:].isdigit():
+                attributes['segment'] = int(part[1:])
+            elif part.startswith('t') and part[1:].isdigit():
+                attributes['stride'] = int(part[1:])
+            elif part == 'reversed':
+                attributes['reversed'] = True
+            elif part.startswith('noise'):
+                try:
+                    attributes['noise'] = float(part[5:])
+                except ValueError:
+                    pass
+        
+        return attributes
+    
+    def get_class_name(self, config: DatasetConfig) -> str:
         """Generate a class name based on dataset config and subfolder."""
         base_name = config.dataset
         
-        # If merge_subfolders is True, just use the dataset name
         if config.merge_subfolders:
             return base_name
             
-        # Extract relevant attributes that should distinguish classes
-        distinguishing_features = []
-        if config.attributes:
-            if config.attributes.get('reversed', False):
-                distinguishing_features.append('reversed')
-            if 'noise' in config.attributes:
-                distinguishing_features.append(f"noise{config.attributes['noise']}")
+        # Get attributes from both explicit config and subfolder name
+        subfolder_attributes = self.parse_subfolder(config.subfolder)
+        if self.verbose:
+            print(f"\nDebug get_class_name:")
+            print(f"  base_name: {base_name}")
+            print(f"  subfolder: {config.subfolder}")
+            print(f"  parsed attributes: {subfolder_attributes}")
         
-        # If we have distinguishing features, add them to the class name
+        # Build distinguishing features
+        distinguishing_features = []
+        if subfolder_attributes.get('reversed', False):
+            distinguishing_features.append('reversed')
+        if 'noise' in subfolder_attributes:
+            distinguishing_features.append(f"noise{subfolder_attributes['noise']}")
+        
         if distinguishing_features:
             return f"{base_name}_{'_'.join(distinguishing_features)}"
-        
         return base_name
 
     def process_h5_file(self, filename: str, config: DatasetConfig) -> ProcessedDataset:
         """Process a single H5 file and return embeddings and labels."""
+        if self.verbose:
+            print(f"\nProcessing file: {filename}")
+        
         embeddings = []
         labels = []
         
@@ -190,7 +217,8 @@ class H5DataProcessor:
                     num_samples=0
                 )
             
-            # Handle hierarchical structure
+            class_name = self.get_class_name(config)
+            
             def process_group(group: h5py.Group, parent_path: str = "") -> None:
                 for name in group.keys():
                     item = group[name]
@@ -202,8 +230,6 @@ class H5DataProcessor:
                             process_group(item)
                     else:
                         embeddings.append(item[()])
-                        # Get appropriate class name including distinguishing features
-                        class_name = self.get_class_name(config, parent_path)
                         labels.append(class_name)
             
             process_group(embeddings_group)
@@ -211,17 +237,14 @@ class H5DataProcessor:
         embeddings_array = np.array(embeddings)
         
         if self.verbose:
-            print(f"\nProcessed {filename}:")
+            print(f"Processed {filename}:")
             print(f"  Total samples: {len(labels)}")
-            unique_labels = set(labels)
-            for label in sorted(unique_labels):
-                count = labels.count(label)
-                print(f"  {label}: {count} samples")
+            print(f"  {class_name}: {len(labels)} samples")
         
         return ProcessedDataset(
             embeddings=embeddings_array,
             labels=labels,
-            name=config.dataset,
+            name=class_name,
             num_samples=len(labels)
         )
     
