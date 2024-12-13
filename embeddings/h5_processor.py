@@ -150,6 +150,28 @@ class H5DataProcessor:
         filename = os.path.join(path, f"{method}_embeddings.h5")
         return filename
     
+    def get_class_name(self, config: DatasetConfig, subfolder: str = "") -> str:
+        """Generate a class name based on dataset config and subfolder."""
+        base_name = config.dataset
+        
+        # If merge_subfolders is True, just use the dataset name
+        if config.merge_subfolders:
+            return base_name
+            
+        # Extract relevant attributes that should distinguish classes
+        distinguishing_features = []
+        if config.attributes:
+            if config.attributes.get('reversed', False):
+                distinguishing_features.append('reversed')
+            if 'noise' in config.attributes:
+                distinguishing_features.append(f"noise{config.attributes['noise']}")
+        
+        # If we have distinguishing features, add them to the class name
+        if distinguishing_features:
+            return f"{base_name}_{'_'.join(distinguishing_features)}"
+        
+        return base_name
+
     def process_h5_file(self, filename: str, config: DatasetConfig) -> ProcessedDataset:
         """Process a single H5 file and return embeddings and labels."""
         embeddings = []
@@ -180,8 +202,9 @@ class H5DataProcessor:
                             process_group(item)
                     else:
                         embeddings.append(item[()])
-                        label = f"{config.dataset}/{parent_path}" if parent_path and not config.merge_subfolders else config.dataset
-                        labels.append(label.strip('/'))
+                        # Get appropriate class name including distinguishing features
+                        class_name = self.get_class_name(config, parent_path)
+                        labels.append(class_name)
             
             process_group(embeddings_group)
         
@@ -190,7 +213,8 @@ class H5DataProcessor:
         if self.verbose:
             print(f"\nProcessed {filename}:")
             print(f"  Total samples: {len(labels)}")
-            for label in sorted(set(labels)):
+            unique_labels = set(labels)
+            for label in sorted(unique_labels):
                 count = labels.count(label)
                 print(f"  {label}: {count} samples")
         
