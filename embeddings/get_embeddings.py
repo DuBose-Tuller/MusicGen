@@ -33,24 +33,15 @@ def process_file(file, model, method="last", device="cuda"):
 def parse_args():
     parser = argparse.ArgumentParser(description="Generate embeddings for audio files")
     parser.add_argument("dataset", help="Name of the dataset")
-    parser.add_argument("-s", "--segment", type=str, default=None, help="Segment length")
-    parser.add_argument("-t", "--stride", type=str, default=None, help="Stride length")
+    parser.add_argument("--subfolder", default="raw", help="Subfolder under dataset (e.g. 's15_t15' or 'reversed_noise0.5')")
     parser.add_argument("-m", "--method", default="last", choices=["last", "mean"], help="Embedding method to use")
     parser.add_argument("-o", "--override", action="store_true", help="Override existing embedding file")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose output")
 
     args = parser.parse_args()
 
-    # Prepare paths
-    if args.segment is None and args.stride is None:
-        data_path = f"data/{args.dataset}/raw/"
-        output_dir = os.path.join("embeddings", args.dataset, "raw")
-    else:
-        segment = args.segment if args.segment is not None else "all"
-        stride = args.stride if args.stride is not None else "none"
-        data_path = f"data/{args.dataset}/s{segment}-t{stride}/"
-        output_dir = os.path.join("embeddings", args.dataset, f"s{segment}-t{stride}")
-
+    data_path = os.path.join("data", args.dataset, args.subfolder)
+    output_dir = os.path.join("embeddings", args.dataset, args.subfolder)
     os.makedirs(output_dir, exist_ok=True)
     output_file = os.path.join(output_dir, f"{args.method}_embeddings.h5")
 

@@ -12,10 +12,27 @@ from datetime import datetime
 class DatasetConfig:
     """Configuration for a dataset."""
     dataset: str
-    method: str
-    segment: Optional[int]
-    stride: Optional[int]
+    subfolder: str = "raw"  # Default to raw if no attributes specified
     merge_subfolders: bool = True
+    attributes: dict = None  # Optional attributes that affect the subfolder name
+
+    def get_subfolder_path(self) -> str:
+        """Generate subfolder path based on attributes."""
+        if not self.attributes:
+            return self.subfolder
+        
+        # Build subfolder name from attributes
+        parts = []
+        if 'segment' in self.attributes:
+            parts.append(f"s{self.attributes['segment']}")
+        if 'stride' in self.attributes:
+            parts.append(f"t{self.attributes['stride']}")
+        if 'reversed' in self.attributes and self.attributes['reversed']:
+            parts.append("reversed")
+        if 'noise' in self.attributes:
+            parts.append(f"noise{self.attributes['noise']}")
+        
+        return "_".join(parts) if parts else "raw"
 
 @dataclass
 class ProcessedDataset:
@@ -122,16 +139,15 @@ class H5DataProcessor:
     
     def get_embedding_path(self, config: DatasetConfig) -> str:
         """Constructs the path to the H5 file based on config."""
-        if config.segment and config.stride:
-            sampling = f"s{config.segment}-t{config.stride}"
-        else:
-            sampling = "raw"
-            
-        path = os.path.join(config.dataset, sampling)
+        subfolder = config.get_subfolder_path()
+        path = os.path.join(config.dataset, subfolder)
+        
         if not os.path.exists(path):
             raise ValueError(f"Path does not exist: {path}")
         
-        filename = os.path.join(path, f"{config.method}_embeddings.h5")
+        # Default to "last" method if not specified in attributes
+        method = config.attributes.get('method', 'last') if config.attributes else 'last'
+        filename = os.path.join(path, f"{method}_embeddings.h5")
         return filename
     
     def process_h5_file(self, filename: str, config: DatasetConfig) -> ProcessedDataset:
