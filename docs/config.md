@@ -1,7 +1,7 @@
 # Configuration System Documentation
 
 ## Overview
-The configuration system uses YAML files to specify datasets and analysis parameters for embedding generation, classification, and dimensionality reduction tasks. The system supports flexible dataset organization with automatic attribute detection from folder structures.
+The configuration system uses YAML files to specify datasets and analysis parameters for embedding generation, classification, and dimensionality reduction tasks. The system supports both simple dataset organization and hierarchical structures with automatic attribute detection from folder structures.
 
 ## Configuration File Structure
 
@@ -26,49 +26,118 @@ umap:
 ## Dataset Configuration
 
 ### Basic Parameters
-
 - `dataset`: (Required) Name of the dataset directory
-- `subfolder`: (Optional) Name of the subfolder containing the audio files. Defaults to "raw"
+- `subfolder`: (Optional) Name of the subfolder or path containing the audio files. Defaults to "raw"
 - `merge_subfolders`: (Optional) Boolean indicating whether to treat all subfolders as one class. Defaults to true
 
+### Organization Methods
+
+#### Traditional (Flat) Structure
+```
+data/
+└── dataset_name/
+    ├── raw/
+    └── technical_attributes/
+```
+
+#### Hierarchical Structure
+```
+data/
+└── dataset_name/
+    └── subclass/
+        └── technical_attributes/
+```
+
 ### Subfolder Naming Convention
-
-The system automatically detects attributes from subfolder names using the following patterns:
-
+The system automatically detects attributes from the final subfolder name using these patterns:
 - Segment length: `s<number>` (e.g., "s15" for 15-second segments)
 - Stride length: `t<number>` (e.g., "t15" for 15-second stride)
 - Reversed audio: `reversed`
 - Noise level: `noise<number>` (e.g., "noise0.5" for 0.5 noise level)
 
-Subfolder parts can be separated by either hyphens or underscores:
+Parts can be separated by either hyphens or underscores:
 ```
 s15-t15_reversed
 s15_t15_noise0.5
 ```
 
+### Class Name Generation
+
+#### Traditional Structure
+- Basic dataset: `"dataset_name"`
+- With attributes: `"dataset_name_reversed"` or `"dataset_name_noise0.5"`
+
+#### Hierarchical Structure
+The system combines:
+1. Dataset name
+2. Subclass folder name(s)
+3. Technical attributes (if distinguishing)
+
+Examples:
+- `NHS/Dance/s15-t15` → `NHS_Dance`
+- `NHS/Dance/s15-t15_reversed` → `NHS_Dance_reversed`
+- `NHS/Dance/s15-t15_noise0.5` → `NHS_Dance_noise0.5`
+
 ### Example Configurations
 
-1. Basic dataset with default settings:
+#### 1. Traditional Structure
 ```yaml
+# Basic dataset
 datasets:
   - dataset: "acpas"
-```
 
-2. Dataset with specific subfolder:
-```yaml
+# With specific subfolder
 datasets:
+  - dataset: "acpas"
+    subfolder: "s15-t15"
+    merge_subfolders: false
+
+# Multiple versions
+datasets:
+  - dataset: "acpas"
+    subfolder: "s15-t15_reversed"
+    merge_subfolders: false
   - dataset: "acpas"
     subfolder: "s15-t15"
     merge_subfolders: false
 ```
 
-3. Multiple versions of the same dataset:
+#### 2. Hierarchical Structure
+```yaml
+# Single subclass
+datasets:
+  - dataset: "NHS"
+    subfolder: "Dance/s15-t15"
+    merge_subfolders: false
+
+# Multiple subclasses
+datasets:
+  - dataset: "NHS"
+    subfolder: "Dance/s15-t15"
+    merge_subfolders: false
+  - dataset: "NHS"
+    subfolder: "Love/s15-t15"
+    merge_subfolders: false
+
+# Mixed attributes
+datasets:
+  - dataset: "NHS"
+    subfolder: "Dance/s15-t15"
+    merge_subfolders: false
+  - dataset: "NHS"
+    subfolder: "Dance/s15-t15_reversed"
+    merge_subfolders: false
+```
+
+#### 3. Mixed Usage
 ```yaml
 datasets:
-  - dataset: "acpas"
-    subfolder: "s15-t15_reversed"
+  # Hierarchical dataset
+  - dataset: "NHS"
+    subfolder: "Dance/s15-t15"
     merge_subfolders: false
   
+  # Traditional dataset
   - dataset: "acpas"
     subfolder: "s15-t15"
     merge_subfolders: false
@@ -103,19 +172,9 @@ classifier:
   solver: "lbfgs"
 ```
 
-## Class Name Generation
-
-The system automatically generates class names based on the dataset name and distinguishing features found in the subfolder name:
-
-- Basic dataset: `"dataset_name"`
-- Reversed dataset: `"dataset_name_reversed"`
-- Dataset with noise: `"dataset_name_noise0.5"`
-
-When `merge_subfolders` is true, all data from the dataset will use the basic dataset name regardless of subfolder attributes.
-
 ## Directory Structure
 
-Expected directory structure:
+### Traditional Structure
 ```
 data/
 ├── dataset1/
@@ -134,6 +193,31 @@ embeddings/
 └── dataset2/
     ├── raw/
     └── s30-t15/
+```
+
+### Hierarchical Structure
+```
+data/
+└── NHS/
+    ├── Dance/
+    │   └── s15-t15/
+    ├── Love/
+    │   └── s15-t15/
+    ├── Lullaby/
+    │   └── s15-t15/
+    └── Healing/
+        └── s15-t15/
+
+embeddings/
+└── NHS/
+    ├── Dance/
+    │   └── s15-t15/
+    ├── Love/
+    │   └── s15-t15/
+    ├── Lullaby/
+    │   └── s15-t15/
+    └── Healing/
+        └── s15-t15/
 ```
 
 ## Usage Examples
@@ -157,7 +241,6 @@ datasets:
   - dataset: "acpas"
     subfolder: "s15-t15_reversed"
     merge_subfolders: false
-  
   - dataset: "acpas"
     subfolder: "s15-t15"
     merge_subfolders: false
@@ -170,17 +253,15 @@ classifier:
 ### Multi-Dataset Analysis
 ```yaml
 datasets:
-  - dataset: "acpas"
-    subfolder: "s15-t15"
+  - dataset: "NHS"
+    subfolder: "Dance/s15-t15"
     merge_subfolders: false
-  
+  - dataset: "NHS"
+    subfolder: "Love/s15-t15"
+    merge_subfolders: false
   - dataset: "birdsong"
     subfolder: "raw"
     merge_subfolders: true
-  
-  - dataset: "CBF"
-    subfolder: "s15_t15"
-    merge_subfolders: false
 
 umap:
   n_neighbors: 15
