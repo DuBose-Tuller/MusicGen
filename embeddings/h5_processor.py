@@ -150,51 +150,73 @@ class H5DataProcessor:
         filename = os.path.join(path, f"{method}_embeddings.h5")
         return filename
     
-    def parse_subfolder(self, subfolder: str) -> dict:
-        """Parse subfolder name to extract attributes."""
-        attributes = {}
-        parts = subfolder.replace('-', '_').split('_')
+    def parse_subfolder(self, subfolder: str) -> tuple[str, dict]:
+        """Parse subfolder name to extract class name and attributes.
         
-        for part in parts:
-            if part.startswith('s') and part[1:].isdigit():
-                attributes['segment'] = int(part[1:])
-            elif part.startswith('t') and part[1:].isdigit():
-                attributes['stride'] = int(part[1:])
-            elif part == 'reversed':
+        Args:
+            subfolder: Full subfolder path (e.g., "Dance/s15-t15" or "s15-t15")
+            
+        Returns:
+            tuple of (class_name, attributes_dict)
+        """
+        # Split path into parts
+        parts = subfolder.split('/')
+        
+        # Last part contains the technical attributes (segment, stride, etc)
+        tech_part = parts[-1]
+        # Any earlier parts are considered class information
+        class_parts = parts[:-1]
+        
+        # Parse technical attributes
+        attributes = {}
+        tech_pieces = tech_part.replace('-', '_').split('_')
+        
+        for piece in tech_pieces:
+            if piece.startswith('s') and piece[1:].isdigit():
+                attributes['segment'] = int(piece[1:])
+            elif piece.startswith('t') and piece[1:].isdigit():
+                attributes['stride'] = int(piece[1:])
+            elif piece == 'reversed':
                 attributes['reversed'] = True
-            elif part.startswith('noise'):
+            elif piece.startswith('noise'):
                 try:
-                    attributes['noise'] = float(part[5:])
+                    attributes['noise'] = float(piece[5:])
                 except ValueError:
                     pass
         
-        return attributes
+        # Join any class parts to form class name
+        class_name = '_'.join(class_parts) if class_parts else None
+        
+        return class_name, attributes
     
     def get_class_name(self, config: DatasetConfig) -> str:
         """Generate a class name based on dataset config and subfolder."""
         base_name = config.dataset
         
-        if config.merge_subfolders:
-            return base_name
-            
-        # Get attributes from both explicit config and subfolder name
-        subfolder_attributes = self.parse_subfolder(config.subfolder)
+        # Get class name and attributes from subfolder
+        subclass_name, subfolder_attributes = self.parse_subfolder(config.subfolder)
+        
         if self.verbose:
             print(f"\nDebug get_class_name:")
             print(f"  base_name: {base_name}")
             print(f"  subfolder: {config.subfolder}")
+            print(f"  subclass_name: {subclass_name}")
             print(f"  parsed attributes: {subfolder_attributes}")
         
-        # Build distinguishing features
-        distinguishing_features = []
-        if subfolder_attributes.get('reversed', False):
-            distinguishing_features.append('reversed')
-        if 'noise' in subfolder_attributes:
-            distinguishing_features.append(f"noise{subfolder_attributes['noise']}")
+        # Build final class name
+        parts = [base_name]
         
-        if distinguishing_features:
-            return f"{base_name}_{'_'.join(distinguishing_features)}"
-        return base_name
+        # Add subclass if present (regardless of merge_subfolders setting)
+        if subclass_name:
+            parts.append(subclass_name)
+        
+        # Add distinguishing features
+        if subfolder_attributes.get('reversed', False):
+            parts.append('reversed')
+        if 'noise' in subfolder_attributes:
+            parts.append(f"noise{subfolder_attributes['noise']}")
+        
+        return '_'.join(parts)
 
     def process_h5_file(self, filename: str, config: DatasetConfig) -> ProcessedDataset:
         """Process a single H5 file and return embeddings and labels."""
