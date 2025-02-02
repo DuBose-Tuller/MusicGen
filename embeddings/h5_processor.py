@@ -12,10 +12,27 @@ from datetime import datetime
 class DatasetConfig:
     """Configuration for a dataset."""
     dataset: str
-    method: str
-    segment: Optional[int]
-    stride: Optional[int]
+    subfolder: str = "raw"  # Default to raw if no attributes specified
     merge_subfolders: bool = True
+    attributes: dict = None  # Optional attributes that affect the subfolder name
+
+    def get_subfolder_path(self) -> str:
+        """Generate subfolder path based on attributes."""
+        if not self.attributes:
+            return self.subfolder
+        
+        # Build subfolder name from attributes
+        parts = []
+        if 'segment' in self.attributes:
+            parts.append(f"s{self.attributes['segment']}")
+        if 'stride' in self.attributes:
+            parts.append(f"t{self.attributes['stride']}")
+        if 'reversed' in self.attributes and self.attributes['reversed']:
+            parts.append("reversed")
+        if 'noise' in self.attributes:
+            parts.append(f"noise{self.attributes['noise']}")
+        
+        return "_".join(parts) if parts else "raw"
 
 @dataclass
 class ProcessedDataset:
@@ -122,20 +139,90 @@ class H5DataProcessor:
     
     def get_embedding_path(self, config: DatasetConfig) -> str:
         """Constructs the path to the H5 file based on config."""
-        if config.segment and config.stride:
-            sampling = f"s{config.segment}-t{config.stride}"
-        else:
-            sampling = "raw"
-            
-        path = os.path.join(config.dataset, sampling)
+        subfolder = config.get_subfolder_path()
+        path = os.path.join(config.dataset, subfolder)
+        
         if not os.path.exists(path):
             raise ValueError(f"Path does not exist: {path}")
         
-        filename = os.path.join(path, f"{config.method}_embeddings.h5")
+        # Default to "last" method if not specified in attributes
+        method = config.attributes.get('method', 'last') if config.attributes else 'last'
+        filename = os.path.join(path, f"{method}_embeddings.h5")
         return filename
     
+    def parse_subfolder(self, subfolder: str) -> tuple[str, dict]:
+        """Parse subfolder name to extract class name and attributes.
+        
+        Args:
+            subfolder: Full subfolder path (e.g., "Dance/s15-t15" or "s15-t15")
+            
+        Returns:
+            tuple of (class_name, attributes_dict)
+        """
+        # Split path into parts
+        parts = subfolder.split('/')
+        
+        # Last part contains the technical attributes (segment, stride, etc)
+        tech_part = parts[-1]
+        # Any earlier parts are considered class information
+        class_parts = parts[:-1]
+        
+        # Parse technical attributes
+        attributes = {}
+        tech_pieces = tech_part.replace('-', '_').split('_')
+        
+        for piece in tech_pieces:
+            if piece.startswith('s') and piece[1:].isdigit():
+                attributes['segment'] = int(piece[1:])
+            elif piece.startswith('t') and piece[1:].isdigit():
+                attributes['stride'] = int(piece[1:])
+            elif piece == 'reversed':
+                attributes['reversed'] = True
+            elif piece.startswith('noise'):
+                try:
+                    attributes['noise'] = float(piece[5:])
+                except ValueError:
+                    pass
+        
+        # Join any class parts to form class name
+        class_name = '_'.join(class_parts) if class_parts else None
+        
+        return class_name, attributes
+    
+    def get_class_name(self, config: DatasetConfig) -> str:
+        """Generate a class name based on dataset config and subfolder."""
+        base_name = config.dataset
+        
+        # Get class name and attributes from subfolder
+        subclass_name, subfolder_attributes = self.parse_subfolder(config.subfolder)
+        
+        if self.verbose:
+            print(f"\nDebug get_class_name:")
+            print(f"  base_name: {base_name}")
+            print(f"  subfolder: {config.subfolder}")
+            print(f"  subclass_name: {subclass_name}")
+            print(f"  parsed attributes: {subfolder_attributes}")
+        
+        # Build final class name
+        parts = [base_name]
+        
+        # Add subclass if present (regardless of merge_subfolders setting)
+        if subclass_name:
+            parts.append(subclass_name)
+        
+        # Add distinguishing features
+        if subfolder_attributes.get('reversed', False):
+            parts.append('reversed')
+        if 'noise' in subfolder_attributes:
+            parts.append(f"noise{subfolder_attributes['noise']}")
+        
+        return '_'.join(parts)
+
     def process_h5_file(self, filename: str, config: DatasetConfig) -> ProcessedDataset:
         """Process a single H5 file and return embeddings and labels."""
+        if self.verbose:
+            print(f"\nProcessing file: {filename}")
+        
         embeddings = []
         labels = []
         
@@ -152,7 +239,8 @@ class H5DataProcessor:
                     num_samples=0
                 )
             
-            # Handle hierarchical structure
+            class_name = self.get_class_name(config)
+            
             def process_group(group: h5py.Group, parent_path: str = "") -> None:
                 for name in group.keys():
                     item = group[name]
@@ -164,24 +252,21 @@ class H5DataProcessor:
                             process_group(item)
                     else:
                         embeddings.append(item[()])
-                        label = f"{config.dataset}/{parent_path}" if parent_path and not config.merge_subfolders else config.dataset
-                        labels.append(label.strip('/'))
+                        labels.append(class_name)
             
             process_group(embeddings_group)
         
         embeddings_array = np.array(embeddings)
         
         if self.verbose:
-            print(f"\nProcessed {filename}:")
+            print(f"Processed {filename}:")
             print(f"  Total samples: {len(labels)}")
-            for label in sorted(set(labels)):
-                count = labels.count(label)
-                print(f"  {label}: {count} samples")
+            print(f"  {class_name}: {len(labels)} samples")
         
         return ProcessedDataset(
             embeddings=embeddings_array,
             labels=labels,
-            name=config.dataset,
+            name=class_name,
             num_samples=len(labels)
         )
     
