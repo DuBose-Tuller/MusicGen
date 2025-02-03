@@ -36,11 +36,22 @@ class DatasetConfig:
 
 @dataclass
 class ProcessedDataset:
-    """Container for processed dataset information."""
+    """Container for processed dataset information.
+    
+    Args:
+        embeddings: numpy array of embeddings
+        labels: list of class labels
+        filenames: list of original audio filenames
+        name: name of the dataset
+        num_samples: number of samples in the dataset
+        metadata: optional dictionary of additional metadata
+    """
     embeddings: np.ndarray
     labels: List[str]
+    filenames: List[str]
     name: str
     num_samples: int
+    metadata: Optional[Dict] = None
 
 class H5Manager:
     """Manager for H5 file operations with improved metadata handling."""
@@ -60,7 +71,12 @@ class H5Manager:
                 metadata = f.create_group('metadata')
                 # Create processed files tracking dataset
                 if 'processed_files' not in metadata:
-                    metadata.create_dataset('processed_files', (0,), dtype=h5py.special_dtype(vlen=str),
+                    metadata.create_dataset('processed_files', (0,), 
+                                         dtype=h5py.special_dtype(vlen=str),
+                                         maxshape=(None,), chunks=True)
+                if 'filenames' not in metadata:  # New dataset for filenames
+                    metadata.create_dataset('filenames', (0,),
+                                         dtype=h5py.special_dtype(vlen=str),
                                          maxshape=(None,), chunks=True)
                 # Add creation timestamp
                 metadata.attrs['created_at'] = datetime.now().isoformat()
@@ -113,7 +129,7 @@ class H5Manager:
         
         try:
             with h5py.File(self.h5_file, 'a') as f:
-                # Get the proper group
+                # Save embedding
                 if group_path:
                     current_group = self._get_or_create_group(f['embeddings'], group_path)
                 else:
@@ -122,9 +138,13 @@ class H5Manager:
                 # Save the embedding
                 if safe_name in current_group:
                     del current_group[safe_name]
-                current_group.create_dataset(safe_name, data=np.array(embedding, dtype=np.float32))
+                dset = current_group.create_dataset(safe_name, 
+                                                  data=np.array(embedding, dtype=np.float32))
                 
-                # Update processed files list
+                # Store filename in dataset attributes
+                dset.attrs['original_filename'] = str(filepath)
+                
+                # Update metadata
                 self._add_processed_file(str(filepath))
                 
         except Exception as e:
@@ -225,6 +245,7 @@ class H5DataProcessor:
         
         embeddings = []
         labels = []
+        filenames = []
         
         with h5py.File(filename, 'r') as f:
             if 'embeddings' not in f:
@@ -235,13 +256,12 @@ class H5DataProcessor:
                 return ProcessedDataset(
                     embeddings=np.array([]),
                     labels=[],
+                    filenames=[],
                     name=config.dataset,
                     num_samples=0
                 )
             
-            class_name = self.get_class_name(config)
-            
-            def process_group(group: h5py.Group, parent_path: str = "") -> None:
+            def process_group(group, parent_path: str = "") -> None:
                 for name in group.keys():
                     item = group[name]
                     if isinstance(item, h5py.Group):
@@ -252,21 +272,21 @@ class H5DataProcessor:
                             process_group(item)
                     else:
                         embeddings.append(item[()])
-                        labels.append(class_name)
+                        label = (f"{config.dataset}/{parent_path}" 
+                               if parent_path and not config.merge_subfolders 
+                               else config.dataset)
+                        labels.append(label.strip('/'))
+                        # Get original filename from attributes
+                        filename = item.attrs.get('original_filename', name)
+                        filenames.append(filename)
             
             process_group(embeddings_group)
         
-        embeddings_array = np.array(embeddings)
-        
-        if self.verbose:
-            print(f"Processed {filename}:")
-            print(f"  Total samples: {len(labels)}")
-            print(f"  {class_name}: {len(labels)} samples")
-        
         return ProcessedDataset(
-            embeddings=embeddings_array,
+            embeddings=np.array(embeddings),
             labels=labels,
-            name=class_name,
+            filenames=filenames,
+            name=config.dataset,
             num_samples=len(labels)
         )
     
@@ -319,3 +339,81 @@ class H5DataProcessor:
                 print(f"Class {idx} ({label}): {count} samples")
         
         return X, y, sorted(set(unique_labels))
+    
+    def get_train_test_split(self, dataset: ProcessedDataset, 
+                            test_ratio: float = 0.2,
+                            random_seed: Optional[int] = None) -> Tuple[ProcessedDataset, ProcessedDataset]:
+        """Split dataset into train and test sets, keeping segments together."""
+        train_idx, test_idx = AudioSegmentSplitter.get_train_test_split(
+            dataset.filenames, test_ratio, random_seed
+        )
+        
+        if self.verbose:
+            print(f"\nSplit summary for {dataset.name}:")
+            print(f"Train set: {len(train_idx)} samples")
+            print(f"Test set: {len(test_idx)} samples")
+        
+        train_data = ProcessedDataset(
+            embeddings=dataset.embeddings[train_idx],
+            labels=[dataset.labels[i] for i in train_idx],
+            filenames=[dataset.filenames[i] for i in train_idx],
+            name=dataset.name,
+            num_samples=len(train_idx)
+        )
+        
+        test_data = ProcessedDataset(
+            embeddings=dataset.embeddings[test_idx],
+            labels=[dataset.labels[i] for i in test_idx],
+            filenames=[dataset.filenames[i] for i in test_idx],
+            name=dataset.name,
+            num_samples=len(test_idx)
+        )
+        
+        return train_data, test_data
+    
+
+class AudioSegmentSplitter:
+    """Handles splitting of audio segments ensuring segments from the same source
+    file stay in the same split."""
+    
+    @staticmethod
+    def parse_nhs_filename(filename: str) -> Optional[int]:
+        """Parse NHS Discography filename to extract sample number.
+        
+        Example: "NHSDiscography-123_segment2.wav" -> 123
+        """
+        pattern = r"NHSDiscography-(\d+)_"
+        match = re.match(pattern, filename)
+        if match:
+            return int(match.group(1))
+        return None
+    
+    @staticmethod
+    def get_train_test_split(filenames: List[str], test_ratio: float = 0.2, 
+                            random_seed: Optional[int] = None) -> Tuple[List[int], List[int]]:
+        """Split indices ensuring segments from same sample stay together."""
+        # Extract sample numbers
+        sample_nums = [AudioSegmentSplitter.parse_nhs_filename(f) for f in filenames]
+        
+        # Get unique sample numbers
+        unique_samples = sorted(set(num for num in sample_nums if num is not None))
+        
+        # Random split of unique sample numbers
+        if random_seed is not None:
+            np.random.seed(random_seed)
+        n_test = int(len(unique_samples) * test_ratio)
+        test_samples = set(np.random.choice(unique_samples, n_test, replace=False))
+        
+        # Create train/test indices based on sample numbers
+        train_indices = []
+        test_indices = []
+        
+        for idx, sample_num in enumerate(sample_nums):
+            if sample_num is None:  # Handle files that don't match pattern
+                train_indices.append(idx)
+            elif sample_num in test_samples:
+                test_indices.append(idx)
+            else:
+                train_indices.append(idx)
+        
+        return train_indices, test_indices
