@@ -14,20 +14,16 @@ from pathlib import Path
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Classification of embeddings")
     parser.add_argument('--config', default='config.yaml', help='Path to configuration file')
-    parser.add_argument('--datasets', nargs='+', help='List of datasets to process')
-    parser.add_argument('--output', help='Output filename for the results')
+    parser.add_argument('--test-ratio', type=float, default=0.2, help='Ratio of data to use for testing')
+    parser.add_argument('--random-seed', type=int, default=42, help='Random seed for reproducibility')
+    parser.add_argument('--output', default='../results/classifier', help='Output directory')
     parser.add_argument('--verbose', '-v', action="store_true", help="Extra print statements for debugging")
     return parser.parse_args()
 
 def load_config(config_file):
     with open(config_file, 'r') as f:
         return yaml.safe_load(f)
-
-def merge_config(file_config, args):
-    if args.datasets:
-        file_config['datasets'] = [d for d in file_config['datasets'] if d['dataset'] in args.datasets]
-    return file_config
-
+    
 def compute_metrics(y_test, y_pred, y_prob, is_binary=False):
     """Compute classification metrics."""
     metrics = {
@@ -127,8 +123,7 @@ def save_results(config, matrix, metrics, class_names, output_path):
 def main():
     # Parse arguments and load config
     args = parse_arguments()
-    file_config = load_config(args.config)
-    config = merge_config(file_config, args)
+    config = load_config(args.config)
 
     # Create output directory
     output_dir = Path(args.output)
