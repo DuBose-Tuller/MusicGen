@@ -248,6 +248,9 @@ class H5DataProcessor:
         labels = []
         filenames = []
         
+        # Extract the subfolder from the config to use as part of the label
+        subfolder_label = config.subfolder.split('/')[0] if '/' in config.subfolder else config.subfolder
+        
         with h5py.File(filename, 'r') as f:
             if 'embeddings' not in f:
                 raise ValueError(f"No embeddings group in {filename}")
@@ -270,10 +273,9 @@ class H5DataProcessor:
                         process_group(item, new_path)
                     else:
                         embeddings.append(item[()])
-                        # The label should include the full path when not merging
-                        label = f"{config.dataset}/{parent_path}" if parent_path else config.dataset
-                        labels.append(label.strip('/'))
-                        # Store the full path to the original file
+                        # Create label from dataset and subfolder
+                        label = f"{config.dataset}/{subfolder_label}"
+                        labels.append(label)
                         orig_filename = item.attrs.get('original_filename', name)
                         filenames.append(orig_filename)
             
