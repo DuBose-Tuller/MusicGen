@@ -8,7 +8,7 @@ import yaml
 import argparse
 from datetime import datetime
 import hashlib
-from h5_processor import H5DataProcessor, DatasetConfig, ProcessedDataset
+from h5_processor import H5DataProcessor, DatasetConfig, ProcessedDataset, AudioSegmentSplitter
 from pathlib import Path
 
 def parse_arguments():
@@ -52,18 +52,23 @@ def compute_metrics(y_test, y_pred, y_prob, is_binary=False):
 
 def train_evaluate_model(train_data, test_data, verbose=False):
     """Train and evaluate the classification model using pre-split data."""
+    # Create label mapping for string class labels
+    unique_labels = sorted(set(train_data.labels + test_data.labels))
+    label_to_idx = {label: idx for idx, label in enumerate(unique_labels)}
+    
+    # Convert labels to indices
     X_train = train_data.embeddings
-    y_train = np.array([int(label) for label in train_data.labels])
+    y_train = np.array([label_to_idx[label] for label in train_data.labels])
     X_test = test_data.embeddings
-    y_test = np.array([int(label) for label in test_data.labels])
+    y_test = np.array([label_to_idx[label] for label in test_data.labels])
     
     if verbose:
         print("\nTraining set class distribution:")
-        for i in range(len(np.unique(y_train))):
-            print(f"Class {i}: {np.sum(y_train == i)} samples")
+        for i, label in enumerate(unique_labels):
+            print(f"Class {i} ({label}): {np.sum(y_train == i)} samples")
         print("\nTest set class distribution:")
-        for i in range(len(np.unique(y_test))):
-            print(f"Class {i}: {np.sum(y_test == i)} samples")
+        for i, label in enumerate(unique_labels):
+            print(f"Class {i} ({label}): {np.sum(y_test == i)} samples")
     
     # Scale features
     scaler = StandardScaler()
@@ -85,19 +90,20 @@ def train_evaluate_model(train_data, test_data, verbose=False):
     
     if verbose:
         print("\nPrediction distribution:")
-        for i in range(len(np.unique(y_test))):
-            print(f"Class {i}: {np.sum(y_pred == i)} predictions")
+        for i, label in enumerate(unique_labels):
+            print(f"Class {i} ({label}): {np.sum(y_pred == i)} predictions")
     
     # Compute metrics
     conf_matrix = confusion_matrix(y_test, y_pred)
-    metrics = compute_metrics(y_test, y_pred, y_prob, is_binary=len(np.unique(y_test)) == 2)
+    metrics = compute_metrics(y_test, y_pred, y_prob, is_binary=len(unique_labels) == 2)
     
     # Add split information to metrics
     metrics['split_info'] = {
         'train_size': len(y_train),
         'test_size': len(y_test),
-        'train_class_distribution': [int(np.sum(y_train == i)) for i in range(len(np.unique(y_train)))],
-        'test_class_distribution': [int(np.sum(y_test == i)) for i in range(len(np.unique(y_test)))]
+        'train_class_distribution': [int(np.sum(y_train == i)) for i in range(len(unique_labels))],
+        'test_class_distribution': [int(np.sum(y_test == i)) for i in range(len(unique_labels))],
+        'label_mapping': {str(label): int(idx) for label, idx in label_to_idx.items()}
     }
     
     return conf_matrix, metrics
