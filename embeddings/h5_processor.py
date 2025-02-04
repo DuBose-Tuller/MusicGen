@@ -14,7 +14,7 @@ class DatasetConfig:
     """Configuration for a dataset."""
     dataset: str
     subfolder: str = "raw"  # Default to raw if no attributes specified
-    merge_subfolders: bool = True
+    merge_subfolders: bool = False
     attributes: dict = None  # Optional attributes that affect the subfolder name
 
     def get_subfolder_path(self) -> str:
@@ -266,22 +266,26 @@ class H5DataProcessor:
                 for name in group.keys():
                     item = group[name]
                     if isinstance(item, h5py.Group):
-                        if not config.merge_subfolders:
-                            new_path = f"{parent_path}/{name}" if parent_path else name
-                            process_group(item, new_path)
-                        else:
-                            process_group(item)
+                        new_path = f"{parent_path}/{name}" if parent_path else name
+                        process_group(item, new_path)
                     else:
                         embeddings.append(item[()])
-                        label = (f"{config.dataset}/{parent_path}" 
-                               if parent_path and not config.merge_subfolders 
-                               else config.dataset)
+                        # The label should include the full path when not merging
+                        label = f"{config.dataset}/{parent_path}" if parent_path else config.dataset
                         labels.append(label.strip('/'))
-                        # Get original filename from attributes
-                        filename = item.attrs.get('original_filename', name)
-                        filenames.append(filename)
+                        # Store the full path to the original file
+                        orig_filename = item.attrs.get('original_filename', name)
+                        filenames.append(orig_filename)
             
             process_group(embeddings_group)
+            
+            if self.verbose:
+                print(f"\nProcessed {filename}:")
+                label_counts = {}
+                for label in labels:
+                    label_counts[label] = label_counts.get(label, 0) + 1
+                for label, count in label_counts.items():
+                    print(f"  {label}: {count} samples")
         
         return ProcessedDataset(
             embeddings=np.array(embeddings),
