@@ -348,6 +348,8 @@ class H5DataProcessor:
         train_idx, test_idx = AudioSegmentSplitter.get_train_test_split(
             dataset.filenames, test_ratio, random_seed
         )
+
+        AudioSegmentSplitter.validate_split(dataset.filenames, train_idx, test_idx, self.verbose)
         
         if self.verbose:
             print(f"\nSplit summary for {dataset.name}:")
@@ -378,43 +380,88 @@ class AudioSegmentSplitter:
     file stay in the same split."""
     
     @staticmethod
-    def parse_nhs_filename(filename: str) -> Optional[int]:
-        """Parse NHS Discography filename to extract sample number.
+    def extract_base_id(filename: str) -> Optional[str]:
+        """Extract the base identifier from a segmented audio filename.
         
-        Example: "NHSDiscography-123_segment2.wav" -> 123
+        Args:
+            filename: The filename to parse
+            
+        Returns:
+            The extracted base ID or None if no pattern is found
         """
-        pattern = r"NHSDiscography-(\d+)_"
-        match = re.match(pattern, filename)
-        if match:
-            return int(match.group(1))
-        return None
-    
+        # Remove file extension and path
+        base_name = os.path.basename(filename)
+        name_without_ext = base_name.rsplit('.', 1)[0]
+        
+        # Find the last underscore followed by numbers
+        pattern = r'^(.+)_\d+$'
+        match = re.match(pattern, name_without_ext)
+
+        return match.group(1) if match else None
+
     @staticmethod
     def get_train_test_split(filenames: List[str], test_ratio: float = 0.2, 
                             random_seed: Optional[int] = None) -> Tuple[List[int], List[int]]:
-        """Split indices ensuring segments from same sample stay together."""
-        # Extract sample numbers
-        sample_nums = [AudioSegmentSplitter.parse_nhs_filename(f) for f in filenames]
+        """Split indices ensuring segments from same source stay together."""
+        # Extract base IDs
+        base_ids = [AudioSegmentSplitter.extract_base_id(f) for f in filenames]
         
-        # Get unique sample numbers
-        unique_samples = sorted(set(num for num in sample_nums if num is not None))
+        # Get unique base IDs (excluding None)
+        unique_ids = sorted(set(id_ for id_ in base_ids if id_ is not None))
         
-        # Random split of unique sample numbers
+        if not unique_ids:
+            raise ValueError("No valid base IDs found in filenames")
+        
+        # Random split of unique IDs
         if random_seed is not None:
             np.random.seed(random_seed)
-        n_test = int(len(unique_samples) * test_ratio)
-        test_samples = set(np.random.choice(unique_samples, n_test, replace=False))
+        n_test = max(1, int(len(unique_ids) * test_ratio))  # Ensure at least 1 test sample
+        test_ids = set(np.random.choice(unique_ids, n_test, replace=False))
         
-        # Create train/test indices based on sample numbers
+        # Create train/test indices based on base IDs
         train_indices = []
         test_indices = []
         
-        for idx, sample_num in enumerate(sample_nums):
-            if sample_num is None:  # Handle files that don't match pattern
-                train_indices.append(idx)
-            elif sample_num in test_samples:
+        for idx, base_id in enumerate(base_ids):
+            if base_id is None:  # Handle files that don't match pattern
+                print(f"Warning: no base id found at index {idx}")
+                if random_seed is not None:
+                    np.random.seed(random_seed + idx)  # Ensure deterministic but different for each file
+                if np.random.random() < test_ratio:
+                    test_indices.append(idx)
+                else:
+                    train_indices.append(idx)
+            elif base_id in test_ids:
                 test_indices.append(idx)
             else:
                 train_indices.append(idx)
         
+        if len(test_indices) == 0:
+            raise ValueError("No test samples found! Check filename patterns.")
+        
         return train_indices, test_indices
+
+    @staticmethod
+    def validate_split(filenames: List[str], train_idx: List[int], test_idx: List[int], 
+                      verbose: bool = False) -> bool:
+        """Validate that the split maintains segment grouping integrity."""
+        train_ids = {AudioSegmentSplitter.extract_base_id(filenames[i]) for i in train_idx}
+        test_ids = {AudioSegmentSplitter.extract_base_id(filenames[i]) for i in test_idx}
+        
+        # Remove None values
+        train_ids.discard(None)
+        test_ids.discard(None)
+        
+        # Check for overlap
+        overlap = train_ids & test_ids
+        
+        if verbose:
+            print(f"\nSplit validation:")
+            print(f"  Train IDs: {sorted(train_ids)[:5]}...")
+            print(f"  Test IDs: {sorted(test_ids)[:5]}...")
+            print(f"  Number of unique train IDs: {len(train_ids)}")
+            print(f"  Number of unique test IDs: {len(test_ids)}")
+            if overlap:
+                print(f"  Warning: Found overlapping IDs: {overlap}")
+        
+        return len(overlap) == 0
