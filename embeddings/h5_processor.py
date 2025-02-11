@@ -15,6 +15,7 @@ class DatasetConfig:
     dataset: str
     subfolder: str = "raw"  # Default to raw if no attributes specified
     merge_subfolders: bool = False
+    label: Optional[str] = None # override class label
     attributes: dict = None  # Optional attributes that affect the subfolder name
 
     def get_subfolder_path(self) -> str:
