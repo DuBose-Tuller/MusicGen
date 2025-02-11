@@ -1,6 +1,8 @@
 from sklearn.metrics import f1_score, recall_score, precision_score, confusion_matrix, roc_auc_score
 import numpy as np
 from sklearn.linear_model import LogisticRegression
+from sklearn.svm import LinearSVC
+from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import StandardScaler
 import json
 import os
@@ -37,16 +39,17 @@ def compute_metrics(y_test, y_pred, y_prob, is_binary=False):
         }
     }
 
-    if is_binary:
+    if is_binary and y_prob:
         try:
             metrics["roc_auc"] = roc_auc_score(y_test, y_prob[:, 1])
         except Exception:
             metrics["roc_auc"] = None
     
-    metrics["confidence"] = {
-        "mean": float(np.mean(np.max(y_prob, axis=1))),
-        "std": float(np.std(np.max(y_prob, axis=1)))
-    }
+    if y_prob:
+        metrics["confidence"] = {
+            "mean": float(np.mean(np.max(y_prob, axis=1))),
+            "std": float(np.std(np.max(y_prob, axis=1)))
+        }
     
     return metrics
 
@@ -76,17 +79,27 @@ def train_evaluate_model(train_data, test_data, verbose=False):
     X_test_scaled = scaler.transform(X_test)
     
     # Train model
-    model = LogisticRegression(
-        class_weight='balanced',
-        max_iter=1000,
-        tol=1e-6,
-        C=0.1,
-        solver='lbfgs'
+    # model = LogisticRegression(
+    #     class_weight='balanced',
+    #     penalty='l1',
+    #     max_iter=1000,
+    #     tol=1e-6,
+    #     C=0.1,
+    #     solver='liblinear'
+    # ).fit(X_train_scaled, y_train)
+
+    model = LinearSVC().fit(X_train_scaled, y_train)
+
+    model = MLPClassifier(
+        hidden_layer_sizes=(256,256,256,256),
+        max_iter=100,
+        early_stopping=True
     ).fit(X_train_scaled, y_train)
     
     # Get predictions
     y_pred = model.predict(X_test_scaled)
-    y_prob = model.predict_proba(X_test_scaled)
+    # y_prob = model.predict_proba(X_test_scaled)
+    y_prob = None
     
     if verbose:
         print("\nPrediction distribution:")
