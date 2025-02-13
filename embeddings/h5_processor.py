@@ -7,13 +7,15 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import List, Tuple, Dict, Optional, Any, Set
 from datetime import datetime
+import re
 
 @dataclass
 class DatasetConfig:
     """Configuration for a dataset."""
     dataset: str
     subfolder: str = "raw"  # Default to raw if no attributes specified
-    merge_subfolders: bool = True
+    merge_subfolders: bool = False
+    label: Optional[str] = None # override class label
     attributes: dict = None  # Optional attributes that affect the subfolder name
 
     def get_subfolder_path(self) -> str:
@@ -36,11 +38,22 @@ class DatasetConfig:
 
 @dataclass
 class ProcessedDataset:
-    """Container for processed dataset information."""
+    """Container for processed dataset information.
+    
+    Args:
+        embeddings: numpy array of embeddings
+        labels: list of class labels
+        filenames: list of original audio filenames
+        name: name of the dataset
+        num_samples: number of samples in the dataset
+        metadata: optional dictionary of additional metadata
+    """
     embeddings: np.ndarray
     labels: List[str]
+    filenames: List[str]
     name: str
     num_samples: int
+    metadata: Optional[Dict] = None
 
 class H5Manager:
     """Manager for H5 file operations with improved metadata handling."""
@@ -60,7 +73,12 @@ class H5Manager:
                 metadata = f.create_group('metadata')
                 # Create processed files tracking dataset
                 if 'processed_files' not in metadata:
-                    metadata.create_dataset('processed_files', (0,), dtype=h5py.special_dtype(vlen=str),
+                    metadata.create_dataset('processed_files', (0,), 
+                                         dtype=h5py.special_dtype(vlen=str),
+                                         maxshape=(None,), chunks=True)
+                if 'filenames' not in metadata:  # New dataset for filenames
+                    metadata.create_dataset('filenames', (0,),
+                                         dtype=h5py.special_dtype(vlen=str),
                                          maxshape=(None,), chunks=True)
                 # Add creation timestamp
                 metadata.attrs['created_at'] = datetime.now().isoformat()
@@ -113,7 +131,7 @@ class H5Manager:
         
         try:
             with h5py.File(self.h5_file, 'a') as f:
-                # Get the proper group
+                # Save embedding
                 if group_path:
                     current_group = self._get_or_create_group(f['embeddings'], group_path)
                 else:
@@ -122,9 +140,13 @@ class H5Manager:
                 # Save the embedding
                 if safe_name in current_group:
                     del current_group[safe_name]
-                current_group.create_dataset(safe_name, data=np.array(embedding, dtype=np.float32))
+                dset = current_group.create_dataset(safe_name, 
+                                                  data=np.array(embedding, dtype=np.float32))
                 
-                # Update processed files list
+                # Store filename in dataset attributes
+                dset.attrs['original_filename'] = str(filepath)
+                
+                # Update metadata
                 self._add_processed_file(str(filepath))
                 
         except Exception as e:
@@ -225,6 +247,10 @@ class H5DataProcessor:
         
         embeddings = []
         labels = []
+        filenames = []
+        
+        # Extract the subfolder from the config to use as part of the label
+        subfolder_label = config.subfolder.split('/')[0] if '/' in config.subfolder else config.subfolder
         
         with h5py.File(filename, 'r') as f:
             if 'embeddings' not in f:
@@ -235,38 +261,40 @@ class H5DataProcessor:
                 return ProcessedDataset(
                     embeddings=np.array([]),
                     labels=[],
+                    filenames=[],
                     name=config.dataset,
                     num_samples=0
                 )
             
-            class_name = self.get_class_name(config)
-            
-            def process_group(group: h5py.Group, parent_path: str = "") -> None:
+            def process_group(group, parent_path: str = "") -> None:
                 for name in group.keys():
                     item = group[name]
                     if isinstance(item, h5py.Group):
-                        if not config.merge_subfolders:
-                            new_path = f"{parent_path}/{name}" if parent_path else name
-                            process_group(item, new_path)
-                        else:
-                            process_group(item)
+                        new_path = f"{parent_path}/{name}" if parent_path else name
+                        process_group(item, new_path)
                     else:
                         embeddings.append(item[()])
-                        labels.append(class_name)
+                        # Create label from dataset and subfolder
+                        label = f"{config.dataset}/{subfolder_label}"
+                        labels.append(label)
+                        orig_filename = item.attrs.get('original_filename', name)
+                        filenames.append(orig_filename)
             
             process_group(embeddings_group)
-        
-        embeddings_array = np.array(embeddings)
-        
-        if self.verbose:
-            print(f"Processed {filename}:")
-            print(f"  Total samples: {len(labels)}")
-            print(f"  {class_name}: {len(labels)} samples")
+            
+            if self.verbose:
+                print(f"\nProcessed {filename}:")
+                label_counts = {}
+                for label in labels:
+                    label_counts[label] = label_counts.get(label, 0) + 1
+                for label, count in label_counts.items():
+                    print(f"  {label}: {count} samples")
         
         return ProcessedDataset(
-            embeddings=embeddings_array,
+            embeddings=np.array(embeddings),
             labels=labels,
-            name=class_name,
+            filenames=filenames,
+            name=config.dataset,
             num_samples=len(labels)
         )
     
@@ -319,3 +347,128 @@ class H5DataProcessor:
                 print(f"Class {idx} ({label}): {count} samples")
         
         return X, y, sorted(set(unique_labels))
+    
+    def get_train_test_split(self, dataset: ProcessedDataset, 
+                            test_ratio: float = 0.2,
+                            random_seed: Optional[int] = None) -> Tuple[ProcessedDataset, ProcessedDataset]:
+        """Split dataset into train and test sets, keeping segments together."""
+        train_idx, test_idx = AudioSegmentSplitter.get_train_test_split(
+            dataset.filenames, test_ratio, random_seed
+        )
+
+        AudioSegmentSplitter.validate_split(dataset.filenames, train_idx, test_idx, self.verbose)
+        
+        if self.verbose:
+            print(f"\nSplit summary for {dataset.name}:")
+            print(f"Train set: {len(train_idx)} samples")
+            print(f"Test set: {len(test_idx)} samples")
+        
+        train_data = ProcessedDataset(
+            embeddings=dataset.embeddings[train_idx],
+            labels=[dataset.labels[i] for i in train_idx],
+            filenames=[dataset.filenames[i] for i in train_idx],
+            name=dataset.name,
+            num_samples=len(train_idx)
+        )
+        
+        test_data = ProcessedDataset(
+            embeddings=dataset.embeddings[test_idx],
+            labels=[dataset.labels[i] for i in test_idx],
+            filenames=[dataset.filenames[i] for i in test_idx],
+            name=dataset.name,
+            num_samples=len(test_idx)
+        )
+        
+        return train_data, test_data
+    
+
+class AudioSegmentSplitter:
+    """Handles splitting of audio segments ensuring segments from the same source
+    file stay in the same split."""
+    
+    @staticmethod
+    def extract_base_id(filename: str) -> Optional[str]:
+        """Extract the base identifier from a segmented audio filename.
+        
+        Args:
+            filename: The filename to parse
+            
+        Returns:
+            The extracted base ID or None if no pattern is found
+        """
+        # Remove file extension and path
+        base_name = os.path.basename(filename)
+        name_without_ext = base_name.rsplit('.', 1)[0]
+        
+        # Find the last underscore followed by numbers
+        pattern = r'^(.+)_\d+$'
+        match = re.match(pattern, name_without_ext)
+
+        return match.group(1) if match else None
+
+    @staticmethod
+    def get_train_test_split(filenames: List[str], test_ratio: float = 0.2, 
+                            random_seed: Optional[int] = None) -> Tuple[List[int], List[int]]:
+        """Split indices ensuring segments from same source stay together."""
+        # Extract base IDs
+        base_ids = [AudioSegmentSplitter.extract_base_id(f) for f in filenames]
+        
+        # Get unique base IDs (excluding None)
+        unique_ids = sorted(set(id_ for id_ in base_ids if id_ is not None))
+        
+        if not unique_ids:
+            raise ValueError("No valid base IDs found in filenames")
+        
+        # Random split of unique IDs
+        if random_seed is not None:
+            np.random.seed(random_seed)
+        n_test = max(1, int(len(unique_ids) * test_ratio))  # Ensure at least 1 test sample
+        test_ids = set(np.random.choice(unique_ids, n_test, replace=False))
+        
+        # Create train/test indices based on base IDs
+        train_indices = []
+        test_indices = []
+        
+        for idx, base_id in enumerate(base_ids):
+            if base_id is None:  # Handle files that don't match pattern
+                print(f"Warning: no base id found at index {idx}")
+                if random_seed is not None:
+                    np.random.seed(random_seed + idx)  # Ensure deterministic but different for each file
+                if np.random.random() < test_ratio:
+                    test_indices.append(idx)
+                else:
+                    train_indices.append(idx)
+            elif base_id in test_ids:
+                test_indices.append(idx)
+            else:
+                train_indices.append(idx)
+        
+        if len(test_indices) == 0:
+            raise ValueError("No test samples found! Check filename patterns.")
+        
+        return train_indices, test_indices
+
+    @staticmethod
+    def validate_split(filenames: List[str], train_idx: List[int], test_idx: List[int], 
+                      verbose: bool = False) -> bool:
+        """Validate that the split maintains segment grouping integrity."""
+        train_ids = {AudioSegmentSplitter.extract_base_id(filenames[i]) for i in train_idx}
+        test_ids = {AudioSegmentSplitter.extract_base_id(filenames[i]) for i in test_idx}
+        
+        # Remove None values
+        train_ids.discard(None)
+        test_ids.discard(None)
+        
+        # Check for overlap
+        overlap = train_ids & test_ids
+        
+        if verbose:
+            print(f"\nSplit validation:")
+            print(f"  Train IDs: {sorted(train_ids)[:5]}...")
+            print(f"  Test IDs: {sorted(test_ids)[:5]}...")
+            print(f"  Number of unique train IDs: {len(train_ids)}")
+            print(f"  Number of unique test IDs: {len(test_ids)}")
+            if overlap:
+                print(f"  Warning: Found overlapping IDs: {overlap}")
+        
+        return len(overlap) == 0
