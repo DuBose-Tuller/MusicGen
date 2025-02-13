@@ -10,6 +10,7 @@ from datetime import datetime
 import hashlib
 from h5_processor import H5DataProcessor, DatasetConfig, ProcessedDataset, AudioSegmentSplitter
 from pathlib import Path
+from models import RatingsClassifier
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Classification of embeddings")
@@ -50,7 +51,32 @@ def compute_metrics(y_test, y_pred, y_prob, is_binary=False):
     
     return metrics
 
-def train_evaluate_model(train_data, test_data, verbose=False):
+def get_model_config(model):
+    """Extract model configuration and hyperparameters.
+    Gets all instance attributes that don't start with underscore.
+    Handles numpy arrays and other non-serializable types.
+    """
+    def make_serializable(val):
+        if isinstance(val, np.ndarray):
+            return val.tolist()
+        elif isinstance(val, (int, float, str, bool, type(None))):
+            return val
+        else:
+            return str(val)
+
+    # Get all instance attributes that don't start with underscore
+    attributes = {
+        key: make_serializable(value) 
+        for key, value in vars(model).items() 
+        if not key.startswith('_')
+    }
+
+    return {
+        "type": model.__class__.__name__,
+        "hyperparameters": attributes
+    }
+
+def train_evaluate_model(train_data, test_data, model, verbose=False):
     """Train and evaluate the classification model using pre-split data."""
     # Create label mapping for string class labels
     unique_labels = sorted(set(train_data.labels + test_data.labels))
@@ -76,14 +102,8 @@ def train_evaluate_model(train_data, test_data, verbose=False):
     X_test_scaled = scaler.transform(X_test)
     
     # Train model
-    model = LogisticRegression(
-        class_weight='balanced',
-        max_iter=1000,
-        tol=1e-6,
-        C=0.1,
-        solver='lbfgs'
-    ).fit(X_train_scaled, y_train)
-    
+    model.fit(X_train_scaled, y_train, verbose)
+
     # Get predictions
     y_pred = model.predict(X_test_scaled)
     y_prob = model.predict_proba(X_test_scaled)
@@ -108,23 +128,30 @@ def train_evaluate_model(train_data, test_data, verbose=False):
     
     return conf_matrix, metrics
 
-def generate_output_filename(config):
-    config_str = json.dumps(config, sort_keys=True)
-    config_hash = hashlib.md5(config_str.encode()).hexdigest()[:8]
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return f"classifier_{timestamp}_{config_hash}.json"
-
-def save_results(config, matrix, metrics, class_names, output_path):
+def save_results(config, matrix, metrics, model_config, class_names, output_dir):
     results = {
         "timestamp": datetime.now().isoformat(),
         "config": config,
+        "model_configuration": model_config,
         "confusion_matrix": matrix.tolist(),
         "metrics": metrics,
         "class_names": class_names
     }
     
-    with open(output_path, 'w') as f:
+    # Generate hash from all results
+    results_str = json.dumps(results, sort_keys=True)
+    results_hash = hashlib.md5(results_str.encode()).hexdigest()[:8]
+    
+    # Create filename with timestamp and hash
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"classifier_{timestamp}_{results_hash}.json"
+    filepath = os.path.join(output_dir, filename)
+    
+    # Save results
+    with open(filepath, 'w') as f:
         json.dump(results, f, indent=2)
+    
+    return filepath
 
 def main():
     # Parse arguments and load config
@@ -178,15 +205,17 @@ def main():
         name="combined",
         num_samples=sum(d.num_samples for d in all_test_data)
     )
+    
+    # Create and configure model
+    model = RatingsClassifier(max_iter=100)
+    model_config = get_model_config(model)
 
     # Train and evaluate model
-    conf_matrix, metrics = train_evaluate_model(combined_train, combined_test, args.verbose)
+    conf_matrix, metrics = train_evaluate_model(combined_train, combined_test, model, args.verbose)
 
     # Save results
-    output_path = output_dir / generate_output_filename(config)
-    save_results(config, conf_matrix, metrics, sorted(class_names), output_path)
-    
-    print(f"\nResults saved to: {output_path}")
+    output_path = save_results(config, conf_matrix, metrics, model_config, sorted(class_names), output_dir)
+    print(f"\nResults have been saved to '{output_path}'")
 
 if __name__ == "__main__":
     main()
