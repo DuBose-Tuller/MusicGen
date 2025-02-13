@@ -97,7 +97,7 @@ def train_evaluate_model(X, y, model, verbose=False):
     X_test_scaled = scaler.transform(X_test)
     
     # Train model
-    model.fit(X_train_scaled, y_train)
+    model.fit(X_train_scaled, y_train, verbose)
 
     # Get predictions
     y_pred = model.predict(X_test_scaled)
