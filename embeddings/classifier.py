@@ -10,6 +10,7 @@ import argparse
 from datetime import datetime
 import hashlib
 from h5_processor import H5DataProcessor, DatasetConfig
+from models import RatingsClassifier
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Classification of embeddings")
@@ -54,7 +55,32 @@ def compute_metrics(y_test, y_pred, y_prob, is_binary=False):
     
     return metrics
 
-def train_evaluate_model(X, y, verbose=False):
+def get_model_config(model):
+    """Extract model configuration and hyperparameters.
+    Gets all instance attributes that don't start with underscore.
+    Handles numpy arrays and other non-serializable types.
+    """
+    def make_serializable(val):
+        if isinstance(val, np.ndarray):
+            return val.tolist()
+        elif isinstance(val, (int, float, str, bool, type(None))):
+            return val
+        else:
+            return str(val)
+
+    # Get all instance attributes that don't start with underscore
+    attributes = {
+        key: make_serializable(value) 
+        for key, value in vars(model).items() 
+        if not key.startswith('_')
+    }
+
+    return {
+        "type": model.__class__.__name__,
+        "hyperparameters": attributes
+    }
+
+def train_evaluate_model(X, y, model, verbose=False):
     """Train and evaluate the classification model."""
     if verbose:
         print("\nInitial class distribution:")
@@ -71,14 +97,8 @@ def train_evaluate_model(X, y, verbose=False):
     X_test_scaled = scaler.transform(X_test)
     
     # Train model
-    model = LogisticRegression(
-        class_weight='balanced',
-        max_iter=1000,
-        tol=1e-6,
-        C=0.1,
-        solver='lbfgs'
-    ).fit(X_train_scaled, y_train)
-    
+    model.fit(X_train_scaled, y_train)
+
     # Get predictions
     y_pred = model.predict(X_test_scaled)
     y_prob = model.predict_proba(X_test_scaled)
@@ -100,10 +120,11 @@ def generate_output_filename(config):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     return f"classifier_{timestamp}_{config_hash}.json"
 
-def save_results(config, matrix, metrics, class_names, output_path):
+def save_results(config, matrix, metrics, model_config, class_names, output_path):
     results = {
         "timestamp": datetime.now().isoformat(),
         "config": config,
+        "model_configuration": model_config,
         "confusion_matrix": matrix.tolist(),
         "metrics": metrics,
         "class_names": class_names
@@ -127,13 +148,17 @@ def main():
     datasets = processor.process_configs(config['datasets'])
     X, y, class_names = processor.combine_datasets(datasets)
     
+    # Create and configure model
+    model = RatingsClassifier(max_iter=100)
+    model_config = get_model_config(model)
+    
     # Train and evaluate model
-    conf_matrix, metrics = train_evaluate_model(X, y, verbose=args.verbose)
+    conf_matrix, metrics = train_evaluate_model(X, y, model, verbose=args.verbose)
 
     # Save results
     output_filename = generate_output_filename(config)
     output_path = os.path.join(output_dir, output_filename)
-    save_results(config, conf_matrix, metrics, class_names, output_path)
+    save_results(config, conf_matrix, metrics, model_config, class_names, output_path)
     print(f"\nResults have been saved to '{output_path}'")
 
 if __name__ == "__main__":
