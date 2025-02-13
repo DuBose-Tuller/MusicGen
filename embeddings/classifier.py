@@ -114,13 +114,7 @@ def train_evaluate_model(X, y, model, verbose=False):
     
     return conf_matrix, metrics
 
-def generate_output_filename(config):
-    config_str = json.dumps(config, sort_keys=True)
-    config_hash = hashlib.md5(config_str.encode()).hexdigest()[:8]
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return f"classifier_{timestamp}_{config_hash}.json"
-
-def save_results(config, matrix, metrics, model_config, class_names, output_path):
+def save_results(config, matrix, metrics, model_config, class_names, output_dir):
     results = {
         "timestamp": datetime.now().isoformat(),
         "config": config,
@@ -130,8 +124,20 @@ def save_results(config, matrix, metrics, model_config, class_names, output_path
         "class_names": class_names
     }
     
-    with open(output_path, 'w') as f:
+    # Generate hash from all results
+    results_str = json.dumps(results, sort_keys=True)
+    results_hash = hashlib.md5(results_str.encode()).hexdigest()[:8]
+    
+    # Create filename with timestamp and hash
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"classifier_{timestamp}_{results_hash}.json"
+    filepath = os.path.join(output_dir, filename)
+    
+    # Save results
+    with open(filepath, 'w') as f:
         json.dump(results, f, indent=2)
+    
+    return filepath
 
 def main():
     # Parse arguments and load config
@@ -156,9 +162,7 @@ def main():
     conf_matrix, metrics = train_evaluate_model(X, y, model, verbose=args.verbose)
 
     # Save results
-    output_filename = generate_output_filename(config)
-    output_path = os.path.join(output_dir, output_filename)
-    save_results(config, conf_matrix, metrics, model_config, class_names, output_path)
+    output_path = save_results(config, conf_matrix, metrics, model_config, class_names, output_dir)
     print(f"\nResults have been saved to '{output_path}'")
 
 if __name__ == "__main__":
