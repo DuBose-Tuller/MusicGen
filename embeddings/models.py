@@ -1,5 +1,6 @@
 import numpy as np
 from typing import Tuple, Optional
+from scipy.special import softmax
 from tqdm import tqdm
 
 class RatingsClassifier:
@@ -27,63 +28,64 @@ class RatingsClassifier:
         self.tol = tol
         self.weights: Optional[np.ndarray] = None
         self.bias: Optional[np.ndarray] = None
-    
-    def _softmax(self, x: np.ndarray) -> np.ndarray:
-        """Apply softmax function to the input.
+
+    def _create_target_matrix(self, y: np.ndarray, n_samples: int) -> np.ndarray:
+        """Create target matrix for all samples in vectorized form.
         
         Args:
-            x: Input array of shape (n_samples, n_classes)
+            y: Ground truth labels of shape (n_samples,)
+            n_samples: Number of samples
             
         Returns:
-            Softmax probabilities of shape (n_samples, n_classes)
+            Target matrix of shape (n_samples, n_categories, n_ratings)
         """
-        exp_x = np.exp(x - np.max(x, axis=1, keepdims=True))
-        return exp_x / np.sum(exp_x, axis=1, keepdims=True)
-    
-    def _compute_loss(self, logits: np.ndarray, y: np.ndarray) -> float:
-        """Compute cross-entropy loss using ground truth categories.
+        # Initialize target matrix
+        targets = np.zeros((n_samples, self.n_categories, self.n_ratings))
+        
+        # Create index arrays for efficient assignment
+        sample_idx = np.arange(n_samples)
+        category_idx = np.arange(self.n_categories)
+        
+        # Set highest rating (n_ratings-1) for true categories
+        targets[sample_idx, y, -1] = 1
+        
+        # Create a mask for false categories
+        false_categories = category_idx[None, :] != y[:, None]
+        
+        # Set lowest rating (0) for false categories
+        targets[false_categories] = np.array([1] + [0] * (self.n_ratings - 1))
+        
+        return targets
+
+    def _compute_loss(self, logits: np.ndarray, targets: np.ndarray) -> float:
+        """Compute cross-entropy loss using vectorized operations.
         
         Args:
             logits: Model predictions of shape (n_samples, n_categories * n_ratings)
-            y: Ground truth labels of shape (n_samples,) with values in [0, n_categories-1]
+            targets: Target matrix of shape (n_samples, n_categories * n_ratings)
             
         Returns:
             Loss value
         """
-        n_samples = y.shape[0]
-        total_loss = 0
+        # Reshape logits for per-category softmax
+        logits_reshaped = logits.reshape(-1, self.n_categories, self.n_ratings)
         
-        for i in range(n_samples):
-            true_category = y[i]
-            sample_loss = 0
-            
-            # Compute loss for each category
-            for category in range(self.n_categories):
-                start_idx = category * self.n_ratings
-                end_idx = (category + 1) * self.n_ratings
-                
-                # Target: highest rating (3) for true category, lowest (0) for others
-                target = np.zeros(self.n_ratings)
-                if category == true_category:
-                    target[-1] = 1  # Want rating of 3 for true category
-                else:
-                    target[0] = 1   # Want rating of 0 for other categories
-                
-                category_logits = logits[i, start_idx:end_idx]
-                probs = self._softmax(category_logits.reshape(1, -1))[0]
-                sample_loss -= np.sum(target * np.log(probs + 1e-10))
-            
-            total_loss += sample_loss
-            
-        return total_loss / n_samples
+        # Compute probabilities
+        probs = softmax(logits_reshaped, axis=-1)
+        
+        # Compute cross-entropy loss
+        log_probs = np.log(probs + 1e-10)
+        loss = -np.sum(targets.reshape(-1, self.n_categories, self.n_ratings) * log_probs)
+        
+        return loss / logits.shape[0]
 
-    def fit(self, X: np.ndarray, y: np.ndarray, verbose=False) -> 'RatingsClassifier':
+    def fit(self, X: np.ndarray, y: np.ndarray, verbose: bool = False) -> 'RatingsClassifier':
         """Fit the model using gradient descent.
         
         Args:
             X: Training data of shape (n_samples, n_features)
             y: Target labels of shape (n_samples,) with values in [0, n_categories-1]
-                indicating the true category for each sample
+            verbose: Whether to print progress
             
         Returns:
             self: The fitted classifier
@@ -97,58 +99,46 @@ class RatingsClassifier:
         if self.bias is None:
             self.bias = np.zeros(n_outputs)
         
-        prev_loss = float('inf')
+        # Create target matrix once
+        targets = self._create_target_matrix(y, n_samples)
+        targets_flat = targets.reshape(n_samples, -1)
         
-        # Gradient descent
-        for iteration in tqdm(range(self.max_iter)) if verbose else range(self.max_iter):
+        prev_loss = float('inf')
+        iterator = tqdm(range(self.max_iter)) if verbose else range(self.max_iter)
+        
+        for iteration in iterator:
             # Forward pass
             logits = X @ self.weights + self.bias
-            loss = self._compute_loss(logits, y)
+            loss = self._compute_loss(logits, targets_flat)
             
             if verbose and iteration % 10 == 0:
-                print(loss)
+                if isinstance(iterator, tqdm):
+                    iterator.set_description(f"Loss: {loss:.4f}")
+                else:
+                    print(f"Iteration {iteration}, Loss: {loss:.4f}")
             
             # Check convergence
             if abs(prev_loss - loss) < self.tol:
+                if verbose:
+                    print(f"Converged at iteration {iteration}")
                 break
             prev_loss = loss
             
-            # Backward pass
-            grad_w = np.zeros_like(self.weights)
-            grad_b = np.zeros_like(self.bias)
+            # Backward pass (vectorized)
+            logits_reshaped = logits.reshape(-1, self.n_categories, self.n_ratings)
+            probs = softmax(logits_reshaped, axis=-1)
             
-            for i in range(n_samples):
-                true_category = y[i]
-                
-                # Compute gradients for all categories
-                for category in range(self.n_categories):
-                    start_idx = category * self.n_ratings
-                    end_idx = (category + 1) * self.n_ratings
-                    
-                    # Target: highest rating for true category, lowest for others
-                    target = np.zeros(self.n_ratings)
-                    if category == true_category:
-                        target[-1] = 1  # Want rating of 3 for true category
-                    else:
-                        target[0] = 1   # Want rating of 0 for other categories
-                    
-                    category_logits = logits[i, start_idx:end_idx]
-                    probs = self._softmax(category_logits.reshape(1, -1))[0]
-                    
-                    # Compute gradients
-                    grad = probs - target
-                    grad_w[:, start_idx:end_idx] += X[i:i+1].T @ grad.reshape(1, -1)
-                    grad_b[start_idx:end_idx] += grad
+            # Compute gradients
+            grad = (probs - targets).reshape(n_samples, -1)
+            grad_w = X.T @ grad / n_samples
+            grad_b = np.sum(grad, axis=0) / n_samples
             
             # Update weights and bias
-            grad_w /= n_samples
-            grad_b /= n_samples
-            
             self.weights -= self.learning_rate * grad_w
             self.bias -= self.learning_rate * grad_b
         
         return self
-    
+
     def predict_ratings(self, X: np.ndarray) -> np.ndarray:
         """Predict ratings for each category.
         
@@ -157,19 +147,11 @@ class RatingsClassifier:
             
         Returns:
             Ratings array of shape (n_samples, n_categories) with values in [0, n_ratings-1]
-            indicating the predicted rating for each category
         """
         logits = X @ self.weights + self.bias
-        predictions = np.zeros((X.shape[0], self.n_categories), dtype=int)
-        
-        for i in range(self.n_categories):
-            start_idx = i * self.n_ratings
-            end_idx = (i + 1) * self.n_ratings
-            category_logits = logits[:, start_idx:end_idx]
-            predictions[:, i] = np.argmax(category_logits, axis=1)
-        
-        return predictions
-    
+        logits_reshaped = logits.reshape(-1, self.n_categories, self.n_ratings)
+        return np.argmax(logits_reshaped, axis=2)
+
     def predict(self, X: np.ndarray) -> np.ndarray:
         """Predict the most likely category for each input.
         
@@ -178,35 +160,25 @@ class RatingsClassifier:
             
         Returns:
             Predictions of shape (n_samples,) with values in [0, n_categories-1]
-            indicating the predicted category
         """
         ratings = self.predict_ratings(X)
-        # Predict the category with the highest rating
         return np.argmax(ratings, axis=1)
-    
-    def predict_proba(self, X: np.ndarray) -> Tuple[np.ndarray, ...]:
+
+    def predict_proba(self, X: np.ndarray) -> np.ndarray:
         """Predict probability distributions over ratings for each category.
         
         Args:
             X: Input data of shape (n_samples, n_features)
             
         Returns:
-            Tuple of n_categories arrays, each of shape (n_samples, n_ratings)
-            containing probability distributions over possible ratings
+            Array of shape (n_samples, n_categories, n_ratings) containing
+            probability distributions over possible ratings
         """
         logits = X @ self.weights + self.bias
-        probabilities = []
-        
-        for i in range(self.n_categories):
-            start_idx = i * self.n_ratings
-            end_idx = (i + 1) * self.n_ratings
-            category_logits = logits[:, start_idx:end_idx]
-            category_probs = self._softmax(category_logits)
-            probabilities.append(category_probs)
-        
-        return tuple(probabilities)
+        logits_reshaped = logits.reshape(-1, self.n_categories, self.n_ratings)
+        return softmax(logits_reshaped, axis=-1)
 
-# Example usage
+
 if __name__ == "__main__":
     # Generate some example data
     np.random.seed(42)
@@ -229,5 +201,4 @@ if __name__ == "__main__":
     
     # Get probability distributions
     probs = clf.predict_proba(X)
-    print("Number of probability distributions:", len(probs))
-    print("Shape of each distribution:", probs[0].shape)
+    print("Probability distributions shape:", probs.shape)
