@@ -404,7 +404,7 @@ class AudioSegmentSplitter:
         pattern = r'^(.+)_\d+$'
         match = re.match(pattern, name_without_ext)
 
-        return match.group(1) if match else None
+        return match.group(1) if match else name_without_ext
 
     @staticmethod
     def get_train_test_split(filenames: List[str], test_ratio: float = 0.2, 
