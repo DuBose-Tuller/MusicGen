@@ -11,7 +11,7 @@ class RatingsClassifier:
     """
     
     def __init__(self, n_categories: int = 4, n_ratings: int = 4, learning_rate: float = 0.01, 
-                 max_iter: int = 1000, tol: float = 1e-4):
+                 max_iter: int = 100, tol: float = 1e-4, l1_penalty: float = 0.0):
         """Initialize the classifier.
         
         Args:
@@ -20,12 +20,14 @@ class RatingsClassifier:
             learning_rate: Learning rate for gradient descent
             max_iter: Maximum number of training iterations
             tol: Tolerance for stopping criterion
+            l1_penalty: L1 regularization strength (higher values = more regularization)
         """
         self.n_categories = n_categories
         self.n_ratings = n_ratings
         self.learning_rate = learning_rate
         self.max_iter = max_iter
         self.tol = tol
+        self.l1_penalty = l1_penalty
         self.weights: Optional[np.ndarray] = None
         self.bias: Optional[np.ndarray] = None
 
@@ -58,7 +60,7 @@ class RatingsClassifier:
         return targets
 
     def _compute_loss(self, logits: np.ndarray, targets: np.ndarray) -> float:
-        """Compute cross-entropy loss using vectorized operations.
+        """Compute cross-entropy loss with L1 regularization
         
         Args:
             logits: Model predictions of shape (n_samples, n_categories * n_ratings)
@@ -75,12 +77,17 @@ class RatingsClassifier:
         
         # Compute cross-entropy loss
         log_probs = np.log(probs + 1e-10)
-        loss = -np.sum(targets.reshape(-1, self.n_categories, self.n_ratings) * log_probs)
+        ce_loss = -np.sum(targets.reshape(-1, self.n_categories, self.n_ratings) * log_probs)
         
-        return loss / logits.shape[0]
+        # Add L1 regularization term (only for weights, not bias)
+        l1_term = 0
+        if self.l1_penalty > 0:
+            l1_term = self.l1_penalty * np.sum(np.abs(self.weights))
+            
+        return ce_loss / logits.shape[0] + l1_term
 
     def fit(self, X: np.ndarray, y: np.ndarray, verbose: bool = False) -> 'RatingsClassifier':
-        """Fit the model using gradient descent.
+        """Fit the model using gradient descent with L1 regularization.
         
         Args:
             X: Training data of shape (n_samples, n_features)
@@ -131,6 +138,13 @@ class RatingsClassifier:
             # Compute gradients
             grad = (probs - targets).reshape(n_samples, -1)
             grad_w = X.T @ grad / n_samples
+            
+            # Add L1 regularization gradient
+            if self.l1_penalty > 0:
+                # Subgradient of L1 norm: sign(w)
+                l1_grad = self.l1_penalty * np.sign(self.weights)
+                grad_w += l1_grad
+                
             grad_b = np.sum(grad, axis=0) / n_samples
             
             # Update weights and bias
