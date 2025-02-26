@@ -1,10 +1,12 @@
 import numpy as np
-from typing import Tuple, Optional
-from scipy.special import softmax
+import torch
+from torch import nn
+import torch.nn.functional as F
+from typing import Optional, Union, Tuple
 from tqdm import tqdm
 
 class RatingsClassifier:
-    """A classifier for multi-dimensional rating predictions.
+    """A classifier for multi-dimensional rating predictions using PyTorch for GPU acceleration.
     
     This classifier predicts ratings across multiple categories (e.g., dance, heal, baby, love),
     where each category can have a discrete rating (e.g., 1-4).
@@ -12,7 +14,7 @@ class RatingsClassifier:
     
     def __init__(self, n_categories: int = 4, n_ratings: int = 4, learning_rate: float = 0.01, 
                  max_iter: int = 100, tol: float = 1e-4, l1_penalty: float = 0.0,
-                 batch_size: int = 1024):
+                 batch_size: int = 1024, device: Optional[str] = None):
         """Initialize the classifier.
         
         Args:
@@ -23,6 +25,7 @@ class RatingsClassifier:
             tol: Tolerance for stopping criterion
             l1_penalty: L1 regularization strength
             batch_size: Batch size for mini-batch gradient descent (0 for full batch)
+            device: Device to use ('cuda', 'cpu', or None to auto-select)
         """
         self.n_categories = n_categories
         self.n_ratings = n_ratings
@@ -31,11 +34,20 @@ class RatingsClassifier:
         self.tol = tol
         self.l1_penalty = l1_penalty
         self.batch_size = batch_size
-        self.weights: Optional[np.ndarray] = None
-        self.bias: Optional[np.ndarray] = None
+        
+        # Auto-select device if not specified
+        if device is None:
+            self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        else:
+            self.device = torch.device(device)
+            
+        self.weights: Optional[torch.Tensor] = None
+        self.bias: Optional[torch.Tensor] = None
+        
+        print(f"Using device: {self.device}")
 
-    def _create_target_matrix_vectorized(self, y: np.ndarray) -> np.ndarray:
-        """Create target matrix from raw ratings using vectorized operations.
+    def _create_target_matrix(self, y: torch.Tensor) -> torch.Tensor:
+        """Create target matrix from raw ratings.
         
         Args:
             y: Rating values of shape (n_samples, n_categories) with values in [1, n_ratings]
@@ -46,42 +58,22 @@ class RatingsClassifier:
         n_samples, n_cats = y.shape
         
         # Initialize target matrix
-        targets = np.zeros((n_samples, self.n_categories, self.n_ratings))
+        targets = torch.zeros(n_samples, self.n_categories, self.n_ratings, device=self.device)
         
         # Convert ratings to 0-based index and clamp to valid range
-        y_idx = np.clip(y - 1, 0, self.n_ratings - 1).astype(np.int32)
+        y_idx = torch.clamp(y - 1, 0, self.n_ratings - 1).long()
         
-        # Create index arrays for fancy indexing
-        sample_idx = np.arange(n_samples)[:, np.newaxis]
-        cat_idx = np.arange(n_cats)[np.newaxis, :]
+        # Create index arrays for advanced indexing
+        sample_idx = torch.arange(n_samples, device=self.device).unsqueeze(1).expand(-1, n_cats)
+        cat_idx = torch.arange(n_cats, device=self.device).unsqueeze(0).expand(n_samples, -1)
         
-        # Set 1s using fancy indexing
+        # Set 1s using advanced indexing
         targets[sample_idx, cat_idx, y_idx] = 1
                 
         return targets
 
-    def _compute_loss(self, logits: np.ndarray, targets: np.ndarray) -> float:
-        """Compute cross-entropy loss with L1 regularization"""
-        # Reshape logits for per-category softmax
-        batch_size = logits.shape[0]
-        logits_reshaped = logits.reshape(batch_size, self.n_categories, self.n_ratings)
-        
-        # Compute probabilities
-        probs = softmax(logits_reshaped, axis=-1)
-        
-        # Compute cross-entropy loss
-        targets_reshaped = targets.reshape(batch_size, self.n_categories, self.n_ratings)
-        log_probs = np.log(np.maximum(probs, 1e-10))  # Add small epsilon to avoid log(0)
-        ce_loss = -np.sum(targets_reshaped * log_probs) / batch_size
-        
-        # Add L1 regularization term
-        l1_term = 0
-        if self.l1_penalty > 0:
-            l1_term = self.l1_penalty * np.sum(np.abs(self.weights))
-            
-        return ce_loss + l1_term
-
-    def fit(self, X: np.ndarray, y: np.ndarray, verbose: bool = False) -> 'RatingsClassifier':
+    def fit(self, X: Union[np.ndarray, torch.Tensor], y: Union[np.ndarray, torch.Tensor], 
+            verbose: bool = False) -> 'RatingsClassifier':
         """Fit the model using mini-batch gradient descent with L1 regularization.
         
         Args:
@@ -92,17 +84,31 @@ class RatingsClassifier:
         Returns:
             self: The fitted classifier
         """
+        # Convert numpy arrays to PyTorch tensors if needed
+        if isinstance(X, np.ndarray):
+            X = torch.tensor(X, dtype=torch.float32, device=self.device)
+        else:
+            X = X.to(device=self.device, dtype=torch.float32)
+            
+        if isinstance(y, np.ndarray):
+            y = torch.tensor(y, dtype=torch.float32, device=self.device)
+        else:
+            y = y.to(device=self.device, dtype=torch.float32)
+        
         n_samples, n_features = X.shape
         n_outputs = self.n_categories * self.n_ratings
         
         # Initialize weights and bias if not already initialized
         if self.weights is None:
-            self.weights = np.random.randn(n_features, n_outputs) * 0.01
+            self.weights = torch.randn(n_features, n_outputs, device=self.device) * 0.01
+            self.weights.requires_grad = True
+        
         if self.bias is None:
-            self.bias = np.zeros(n_outputs)
+            self.bias = torch.zeros(n_outputs, device=self.device)
+            self.bias.requires_grad = True
         
         # Create target matrix once
-        targets = self._create_target_matrix_vectorized(y)
+        targets = self._create_target_matrix(y)
         
         # Use mini-batches if batch_size > 0, otherwise use full batch
         batch_size = self.batch_size if self.batch_size > 0 else n_samples
@@ -112,53 +118,49 @@ class RatingsClassifier:
         prev_loss = float('inf')
         iterator = tqdm(range(self.max_iter)) if verbose else range(self.max_iter)
         
+        # Create dataset and dataloader for efficient batch processing
+        dataset = torch.utils.data.TensorDataset(X, targets)
+        dataloader = torch.utils.data.DataLoader(
+            dataset, batch_size=batch_size, shuffle=True, 
+            pin_memory=False, num_workers=0  # Avoid extra CPU overhead
+        )
+        
+        # Use Adam optimizer
+        optimizer = torch.optim.Adam([self.weights, self.bias], lr=self.learning_rate)
+        
         for iteration in iterator:
-            # Shuffle data for stochastic updates
-            if batch_size < n_samples:
-                indices = np.random.permutation(n_samples)
-                X_shuffled = X[indices]
-                targets_shuffled = targets[indices]
-            else:
-                X_shuffled = X
-                targets_shuffled = targets
-            
             # Track the total loss for this epoch
-            total_loss = 0
+            total_loss = 0.0
             
             # Process mini-batches
-            for batch in range(n_batches):
-                start_idx = batch * batch_size
-                end_idx = min((batch + 1) * batch_size, n_samples)
+            for X_batch, targets_batch in dataloader:
+                batch_samples = X_batch.size(0)
                 
-                # Get batch data
-                X_batch = X_shuffled[start_idx:end_idx]
-                targets_batch = targets_shuffled[start_idx:end_idx]
-                batch_samples = end_idx - start_idx
+                # Zero gradients
+                optimizer.zero_grad()
                 
                 # Forward pass
-                logits = X_batch @ self.weights + self.bias
-                loss = self._compute_loss(logits, targets_batch)
-                total_loss += loss * batch_samples
+                logits = F.linear(X_batch, self.weights.t(), self.bias)
+                logits_reshaped = logits.view(batch_samples, self.n_categories, self.n_ratings)
                 
-                # Backward pass (vectorized)
-                logits_reshaped = logits.reshape(-1, self.n_categories, self.n_ratings)
-                probs = softmax(logits_reshaped, axis=-1)
+                # Compute log probabilities with log_softmax for numerical stability
+                log_probs = F.log_softmax(logits_reshaped, dim=2)
                 
-                # Compute gradients
-                grad = (probs - targets_batch).reshape(batch_samples, -1)
-                grad_w = X_batch.T @ grad / batch_samples
+                # Compute cross-entropy loss (negative log likelihood)
+                loss = -torch.sum(targets_batch * log_probs) / batch_samples
                 
-                # Add L1 regularization gradient
+                # Add L1 regularization
                 if self.l1_penalty > 0:
-                    # Subgradient of L1 norm: sign(w)
-                    l1_grad = self.l1_penalty * np.sign(self.weights)
-                    grad_w += l1_grad
-                    
-                grad_b = np.mean(grad, axis=0)
+                    l1_term = self.l1_penalty * torch.sum(torch.abs(self.weights))
+                    loss += l1_term
                 
-                # Update weights and bias
-                self.weights -= self.learning_rate * grad_w
-                self.bias -= self.learning_rate * grad_b
+                # Backward pass
+                loss.backward()
+                
+                # Update weights
+                optimizer.step()
+                
+                total_loss += loss.item() * batch_samples
             
             # Compute average loss for reporting
             avg_loss = total_loss / n_samples
@@ -178,29 +180,87 @@ class RatingsClassifier:
         
         return self
 
-    def predict_proba(self, X: np.ndarray) -> np.ndarray:
-        """Predict probability distributions over ratings for each category."""
-        logits = X @ self.weights + self.bias
-        logits_reshaped = logits.reshape(-1, self.n_categories, self.n_ratings)
-        return softmax(logits_reshaped, axis=-1)
+    def predict_proba(self, X: Union[np.ndarray, torch.Tensor]) -> np.ndarray:
+        """Predict probability distributions over ratings for each category.
+        
+        Args:
+            X: Input data of shape (n_samples, n_features)
+            
+        Returns:
+            Array of shape (n_samples, n_categories, n_ratings) containing
+            probability distributions over possible ratings
+        """
+        # Convert to PyTorch tensor if needed
+        if isinstance(X, np.ndarray):
+            X = torch.tensor(X, dtype=torch.float32, device=self.device)
+        else:
+            X = X.to(device=self.device, dtype=torch.float32)
+        
+        # No gradient tracking needed for prediction
+        with torch.no_grad():
+            logits = F.linear(X, self.weights.t(), self.bias)
+            logits_reshaped = logits.view(-1, self.n_categories, self.n_ratings)
+            probs = F.softmax(logits_reshaped, dim=2)
+            
+        # Return as numpy array
+        return probs.cpu().numpy()
 
-    def predict_ratings(self, X: np.ndarray) -> np.ndarray:
+    def predict_ratings(self, X: Union[np.ndarray, torch.Tensor]) -> np.ndarray:
         """Predict ratings for each category.
         
+        Args:
+            X: Input data of shape (n_samples, n_features)
+            
         Returns:
             Ratings array of shape (n_samples, n_categories) with values in [1, n_ratings]
         """
-        probs = self.predict_proba(X)
-        # Get indices of max probability and convert to 1-based ratings
-        raw_predictions = np.argmax(probs, axis=2) + 1
-        return raw_predictions
+        # Convert to PyTorch tensor if needed
+        if isinstance(X, np.ndarray):
+            X = torch.tensor(X, dtype=torch.float32, device=self.device)
+        else:
+            X = X.to(device=self.device, dtype=torch.float32)
+        
+        # No gradient tracking needed for prediction
+        with torch.no_grad():
+            logits = F.linear(X, self.weights.t(), self.bias)
+            logits_reshaped = logits.view(-1, self.n_categories, self.n_ratings)
+            max_indices = torch.argmax(logits_reshaped, dim=2) + 1
+            
+        # Return as numpy array
+        return max_indices.cpu().numpy()
 
-    def predict(self, X: np.ndarray) -> np.ndarray:
+    def predict(self, X: Union[np.ndarray, torch.Tensor]) -> np.ndarray:
         """Legacy method - returns the category with highest rating.
         
         Returns:
             Category indices of shape (n_samples,) with values in [0, n_categories-1]
         """
         ratings = self.predict_ratings(X)
-        # Return the category with the highest predicted rating
         return np.argmax(ratings, axis=1)
+
+    def to_numpy(self) -> Tuple[np.ndarray, np.ndarray]:
+        """Extract the weights and bias as numpy arrays.
+        
+        Returns:
+            Tuple of (weights, bias) as numpy arrays
+        """
+        with torch.no_grad():
+            weights_np = self.weights.cpu().numpy()
+            bias_np = self.bias.cpu().numpy()
+        return weights_np, bias_np
+
+    def to_device(self, device: str) -> 'RatingsClassifier':
+        """Move the model to a different device.
+        
+        Args:
+            device: Device to move to ('cuda', 'cpu')
+            
+        Returns:
+            self: The model on the new device
+        """
+        self.device = torch.device(device)
+        if self.weights is not None:
+            self.weights = self.weights.to(self.device)
+        if self.bias is not None:
+            self.bias = self.bias.to(self.device)
+        return self
