@@ -59,21 +59,28 @@ def generate_output_filename(config, suffix):
     return f"umap_{timestamp}_{config_hash}{suffix}"
 
 def create_visualization(embeddings, labels, class_names, output_path):
-    """Create and save UMAP visualization."""
     plt.figure(figsize=(12, 8))
     cmap = plt.get_cmap('tab20')
     
-    for i, class_name in enumerate(class_names):
-        mask = labels == i
-        plt.scatter(
-            embeddings[mask, 0],
-            embeddings[mask, 1],
-            c=[cmap(i/len(class_names))],
-            label=class_name,
-            alpha=0.7
-        )
-
-    plt.legend(title="Datasets")
+    # Create random permutation of all data points
+    random_indices = np.random.permutation(len(labels))
+    
+    # Use a single scatter plot with randomized indices
+    scatter = plt.scatter(
+        embeddings[random_indices, 0],
+        embeddings[random_indices, 1],
+        c=labels[random_indices],  # Use labels directly
+        cmap=cmap,                 # Apply colormap to these values
+        alpha=0.3,
+        vmin=0,                   # Ensure proper color scaling
+        vmax=len(class_names)-1
+    )
+    
+    # Add legend manually
+    handles = [plt.Line2D([0], [0], marker='o', color='w', 
+              markerfacecolor=cmap(i/len(class_names)), markersize=10) 
+              for i in range(len(class_names))]
+    plt.legend(handles, class_names, title="Datasets")
     plt.title("UMAP Visualization of Embeddings")
     plt.savefig(output_path, bbox_inches='tight')
     plt.close()
