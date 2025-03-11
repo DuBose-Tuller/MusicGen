@@ -12,4 +12,4 @@
 # !results/classifier/*.json
 **/*.csv
 **/*.npy
-results/interactive-UMAP
+**/*.html
