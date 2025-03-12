@@ -207,7 +207,7 @@ def main():
     )
     
     # Create and configure model
-    model = RatingsClassifier(max_iter=1000, l1_penalty=0.1)
+    model = LogisticRegression(l1_penalty=0.1)
     model_config = get_model_config(model)
 
     # Train and evaluate model
