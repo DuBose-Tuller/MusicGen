@@ -102,7 +102,7 @@ def train_evaluate_model(train_data, test_data, model, verbose=False):
     X_test_scaled = scaler.transform(X_test)
     
     # Train model
-    model.fit(X_train_scaled, y_train, verbose)
+    model.fit(X_train_scaled, y_train)
 
     # Get predictions
     y_pred = model.predict(X_test_scaled)
@@ -207,7 +207,7 @@ def main():
     )
     
     # Create and configure model
-    model = LogisticRegression(l1_penalty=0.1)
+    model = LogisticRegression(penalty=None, C=1, solver='saga', random_state=42, max_iter=1000)
     model_config = get_model_config(model)
 
     # Train and evaluate model
