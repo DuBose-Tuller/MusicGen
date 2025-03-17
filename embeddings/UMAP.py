@@ -78,10 +78,15 @@ def create_visualization(embeddings, labels, class_names, output_path):
     
     # Add legend manually
     handles = [plt.Line2D([0], [0], marker='o', color='w', 
-              markerfacecolor=cmap(i/len(class_names)), markersize=10) 
+              markerfacecolor=cmap(i/(len(class_names)-1)), markersize=10) 
               for i in range(len(class_names))]
+   
+    plt.xticks([])
+    plt.yticks([])
+
+    # class_names = [name.split("/")[0] for name in class_names]
+
     plt.legend(handles, class_names, title="Datasets")
-    plt.title("UMAP Visualization of Embeddings")
     plt.savefig(output_path, bbox_inches='tight')
     plt.close()
 
