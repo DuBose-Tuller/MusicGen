@@ -207,7 +207,7 @@ def main():
     )
     
     # Create and configure model
-    model = LogisticRegression(penalty=None, C=1, solver='saga', random_state=42, max_iter=1000)
+    model = LogisticRegression(penalty=None, C=1, solver='saga', random_state=42, verbose=args.verbose)
     model_config = get_model_config(model)
 
     # Train and evaluate model
