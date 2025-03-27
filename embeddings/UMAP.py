@@ -60,7 +60,7 @@ def generate_output_filename(config, suffix):
 
 def create_visualization(embeddings, labels, class_names, output_path):
     plt.figure(figsize=(12, 8))
-    cmap = plt.get_cmap('tab20')
+    cmap = plt.get_cmap('tab10')
     
     # Create random permutation of all data points
     random_indices = np.random.permutation(len(labels))
@@ -71,7 +71,7 @@ def create_visualization(embeddings, labels, class_names, output_path):
         embeddings[random_indices, 1],
         c=labels[random_indices],  # Use labels directly
         cmap=cmap,                 # Apply colormap to these values
-        alpha=0.3,
+        alpha=0.7,
         vmin=0,                   # Ensure proper color scaling
         vmax=len(class_names)-1
     )
@@ -84,7 +84,7 @@ def create_visualization(embeddings, labels, class_names, output_path):
     plt.xticks([])
     plt.yticks([])
 
-    # class_names = [name.split("/")[0] for name in class_names]
+    class_names = [name.split("/")[1] for name in class_names]
 
     plt.legend(handles, class_names, title="Datasets")
     plt.savefig(output_path, bbox_inches='tight')
