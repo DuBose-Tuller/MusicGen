@@ -8,14 +8,14 @@ import yaml
 import argparse
 from datetime import datetime
 import hashlib
-from h5_processor import H5DataProcessor, DatasetConfig, ProcessedDataset, AudioSegmentSplitter
+from h5_processor import H5DataProcessor, DatasetConfig, ProcessedDataset
 from pathlib import Path
-from models import RatingsClassifier
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Classification of embeddings")
     parser.add_argument('--config', default='config.yaml', help='Path to configuration file')
     parser.add_argument('--test-ratio', type=float, default=0.2, help='Ratio of data to use for testing')
+    parser.add_argument('--val-ratio', type=float, default=0.1)
     parser.add_argument('--random-seed', type=int, default=42, help='Random seed for reproducibility')
     parser.add_argument('--output', default='../results/classifier', help='Output directory')
     parser.add_argument('--verbose', '-v', action="store_true", help="Extra print statements for debugging")
@@ -165,6 +165,7 @@ def main():
     # Process datasets using H5DataProcessor
     processor = H5DataProcessor(verbose=args.verbose)
     all_train_data = []
+    all_val_data = []
     all_test_data = []
     class_names = set()
 
@@ -179,13 +180,20 @@ def main():
         )
         
         # Split the dataset
-        train_data, test_data = processor.get_train_test_split(
+        train_data, nontrain_data = processor.get_train_test_split(
             dataset, 
-            test_ratio=args.test_ratio,
+            test_ratio=(args.test_ratio+args.val_ratio),
             random_seed=args.random_seed
+        )
+
+        # Split the dataset, again!
+        val_data, test_data = processor.get_train_test_split(
+            nontrain_data,
+            test_ratio=args.val_ratio / (args.val_ratio + args.test_ratio)
         )
         
         all_train_data.append(train_data)
+        all_val_data.append(val_data)
         all_test_data.append(test_data)
         class_names.update(dataset.labels)
     
@@ -194,15 +202,23 @@ def main():
         embeddings=np.vstack([d.embeddings for d in all_train_data]),
         labels=[l for d in all_train_data for l in d.labels],
         filenames=[f for d in all_train_data for f in d.filenames],
-        name="combined",
+        name="combined train",
         num_samples=sum(d.num_samples for d in all_train_data)
+    )
+
+    combined_val = ProcessedDataset(
+        embeddings=np.vstack([d.embeddings for d in all_val_data]),
+        labels=[l for d in all_val_data for l in d.labels],
+        filenames=[f for d in all_val_data for f in d.filenames],
+        name="combined val",
+        num_samples=sum(d.num_samples for d in all_val_data)
     )
     
     combined_test = ProcessedDataset(
         embeddings=np.vstack([d.embeddings for d in all_test_data]),
         labels=[l for d in all_test_data for l in d.labels],
         filenames=[f for d in all_test_data for f in d.filenames],
-        name="combined",
+        name="combined test",
         num_samples=sum(d.num_samples for d in all_test_data)
     )
     
