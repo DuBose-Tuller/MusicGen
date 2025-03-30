@@ -189,7 +189,7 @@ def main():
         # Split the dataset, again!
         val_data, test_data = processor.get_train_test_split(
             nontrain_data,
-            test_ratio=args.val_ratio / (args.val_ratio + args.test_ratio)
+            test_ratio=args.test_ratio / (args.val_ratio + args.test_ratio)
         )
         
         all_train_data.append(train_data)
