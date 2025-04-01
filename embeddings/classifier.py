@@ -216,16 +216,16 @@ def main():
     )
     
     # Hyperparam search
-    for c in [.01, .03, .1, .3, 1, 3, 10, 30, 100]:
-        model = LogisticRegression(penalty='l1', C=c, solver='saga', random_state=42)
-        model_config = get_model_config(model)
+    # for c in [.01, .03, .1, .3, 1, 3, 10, 30, 100]:
+    model = LogisticRegression(penalty=None, C=1, solver='saga', random_state=42) # change to c for search
+    model_config = get_model_config(model)
 
-        # Train and evaluate model
-        conf_matrix, metrics = train_evaluate_model(combined_train, combined_val, model, args.verbose)
+    # Train and evaluate model
+    conf_matrix, metrics = train_evaluate_model(combined_train, combined_test, model, args.verbose)
 
-        # Save results
-        output_path = save_results(config, conf_matrix, metrics, model_config, sorted(class_names), output_dir)
-        print(f"\nResults have been saved to '{output_path}'")
+    # Save results
+    output_path = save_results(config, conf_matrix, metrics, model_config, sorted(class_names), output_dir)
+    print(f"\nResults have been saved to '{output_path}'")
 
 if __name__ == "__main__":
     main()
