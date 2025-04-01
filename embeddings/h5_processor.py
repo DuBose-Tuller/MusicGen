@@ -381,6 +381,137 @@ class H5DataProcessor:
         
         return train_data, test_data
     
+    def get_train_val_test_split(self, dataset: ProcessedDataset, 
+                                train_ratio: float = 0.7,
+                                val_ratio: float = 0.1,
+                                test_ratio: float = 0.2,
+                                random_seed: Optional[int] = None) -> Tuple[ProcessedDataset, ProcessedDataset, ProcessedDataset]:
+        """Split dataset into train, validation and test sets, keeping segments from the same source together.
+        
+        Args:
+            dataset: The dataset to split
+            train_ratio: Proportion of data for training (default 0.7)
+            val_ratio: Proportion of data for validation (default 0.1)
+            test_ratio: Proportion of data for testing (default 0.2)
+            random_seed: Random seed for reproducibility
+            
+        Returns:
+            Tuple of (train_data, val_data, test_data) as ProcessedDataset instances
+        """
+        # Validate ratios
+        if not np.isclose(train_ratio + val_ratio + test_ratio, 1.0):
+            raise ValueError(f"Split ratios must sum to 1.0, got {train_ratio + val_ratio + test_ratio}")
+        
+        # Extract base IDs from filenames
+        base_ids = [AudioSegmentSplitter.extract_base_id(f) for f in dataset.filenames]
+        
+        # Get unique base IDs (excluding None)
+        unique_ids = sorted(set(id_ for id_ in base_ids if id_ is not None))
+        
+        if not unique_ids:
+            raise ValueError("No valid base IDs found in filenames")
+        
+        # Set random seed for reproducibility
+        if random_seed is not None:
+            np.random.seed(random_seed)
+        
+        # Shuffle the unique IDs
+        np.random.shuffle(unique_ids)
+        
+        # Calculate split sizes
+        n_total = len(unique_ids)
+        n_train = max(1, int(n_total * train_ratio))
+        n_val = max(1, int(n_total * val_ratio))
+        n_test = n_total - n_train - n_val
+        
+        # Ensure at least one sample in each split
+        if n_test < 1:
+            n_test = 1
+            n_train = max(1, n_train - 1)
+        
+        # Split unique IDs into three sets
+        train_ids = set(unique_ids[:n_train])
+        val_ids = set(unique_ids[n_train:n_train+n_val])
+        test_ids = set(unique_ids[n_train+n_val:])
+        
+        # Create indices for each split
+        train_indices, val_indices, test_indices = [], [], []
+        
+        for idx, base_id in enumerate(base_ids):
+            if base_id is None:
+                # Handle files that don't match pattern
+                if self.verbose:
+                    print(f"Warning: no base id found at index {idx}")
+                
+                # Use deterministic assignment for files without base ID
+                if random_seed is not None:
+                    np.random.seed(random_seed + idx)
+                
+                rand_val = np.random.random()
+                if rand_val < train_ratio:
+                    train_indices.append(idx)
+                elif rand_val < train_ratio + val_ratio:
+                    val_indices.append(idx)
+                else:
+                    test_indices.append(idx)
+            elif base_id in train_ids:
+                train_indices.append(idx)
+            elif base_id in val_ids:
+                val_indices.append(idx)
+            elif base_id in test_ids:
+                test_indices.append(idx)
+            else:
+                raise ValueError("Base ID could not be parsed")
+
+        # Validate the split using AudioSegmentSplitter
+        # Validate train-val split
+        AudioSegmentSplitter.validate_split(
+            dataset.filenames, train_indices, val_indices, self.verbose
+        )
+        
+        # Validate train-test split
+        AudioSegmentSplitter.validate_split(
+            dataset.filenames, train_indices, test_indices, self.verbose
+        )
+        
+        # Validate val-test split
+        AudioSegmentSplitter.validate_split(
+            dataset.filenames, val_indices, test_indices, self.verbose
+        )
+        
+        # Log overall split summary
+        if self.verbose:
+            print(f"\nThree-way split summary for {dataset.name}:")
+            print(f"  Train set: {len(train_indices)} samples")
+            print(f"  Validation set: {len(val_indices)} samples")
+            print(f"  Test set: {len(test_indices)} samples")
+        
+        # Create the split datasets
+        train_data = ProcessedDataset(
+            embeddings=dataset.embeddings[train_indices],
+            labels=[dataset.labels[i] for i in train_indices],
+            filenames=[dataset.filenames[i] for i in train_indices],
+            name=dataset.name,
+            num_samples=len(train_indices)
+        )
+        
+        val_data = ProcessedDataset(
+            embeddings=dataset.embeddings[val_indices],
+            labels=[dataset.labels[i] for i in val_indices],
+            filenames=[dataset.filenames[i] for i in val_indices],
+            name=dataset.name,
+            num_samples=len(val_indices)
+        )
+        
+        test_data = ProcessedDataset(
+            embeddings=dataset.embeddings[test_indices],
+            labels=[dataset.labels[i] for i in test_indices],
+            filenames=[dataset.filenames[i] for i in test_indices],
+            name=dataset.name,
+            num_samples=len(test_indices)
+        )
+        
+        return train_data, val_data, test_data
 
 class AudioSegmentSplitter:
     """Handles splitting of audio segments ensuring segments from the same source

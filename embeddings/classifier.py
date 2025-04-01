@@ -179,17 +179,10 @@ def main():
             DatasetConfig(**dataset_config)
         )
         
-        # Split the dataset
-        train_data, nontrain_data = processor.get_train_test_split(
-            dataset, 
-            test_ratio=(args.test_ratio+args.val_ratio),
-            random_seed=args.random_seed
-        )
-
-        # Split the dataset, again!
-        val_data, test_data = processor.get_train_test_split(
-            nontrain_data,
-            test_ratio=args.test_ratio / (args.val_ratio + args.test_ratio)
+        train_ratio = 1 - args.test_ratio - args.val_ratio
+        train_data, val_data, test_data = processor.get_train_val_test_split(
+            dataset, train_ratio, args.val_ratio, 
+            args.test_ratio, args.random_seed
         )
         
         all_train_data.append(train_data)
@@ -224,7 +217,7 @@ def main():
     
     # Hyperparam search
     for c in [.01, .03, .1, .3, 1, 3, 10, 30, 100]:
-        model = LogisticRegression(penalty='l1', C=c, solver='saga', random_state=42, verbose=args.verbose)
+        model = LogisticRegression(penalty='l1', C=c, solver='saga', random_state=42)
         model_config = get_model_config(model)
 
         # Train and evaluate model
